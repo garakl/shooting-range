@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D Skeet Shooter - Benelli M4 Edition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <!-- Firebase Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Firebase Configuration & Logic ---
+        const firebaseConfig = JSON.parse(localStorage.getItem('firebase_config') || '{}') || {};
+        const injectedConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const finalConfig = injectedConfig || firebaseConfig;
+
+        const app = initializeApp(finalConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'skeet-shooter-v1';
+
+        let currentUser = null;
+
+        const initAuth = async () => {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
+            }
+        };
+
+        initAuth();
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUser = user;
+                loadSessionHistory();
+                console.log("User authenticated:", user.uid);
+            }
+        });
+
+        // --- Data Handling ---
+        window.saveSessionReport = async (hits, misses) => {
+            if (!currentUser) return;
+            try {
+                const reportsRef = collection(db, 'artifacts', appId, 'users', currentUser.uid, 'shooting_sessions');
+                await addDoc(reportsRef, {
+                    hits: hits,
+                    misses: misses,
+                    accuracy: hits + misses > 0 ? Math.round((hits / (hits + misses)) * 100) : 0,
+                    timestamp: serverTimestamp(),
+                    device: 'Benelli M4 Simulation'
+                });
+                console.log("Session saved!");
+            } catch (e) {
+                console.error("Error saving session:", e);
+            }
+        };
+
+        function loadSessionHistory() {
+            if (!currentUser) return;
+            const reportsRef = collection(db, 'artifacts', appId, 'users', currentUser.uid, 'shooting_sessions');
+            const q = query(reportsRef); 
+
+            onSnapshot(q, (snapshot) => {
+                const historyList = document.getElementById('history-list');
+                historyList.innerHTML = '';
+                
+                const data = [];
+                snapshot.forEach(doc => {
+                    data.push({ id: doc.id, ...doc.data() });
+                });
+
+                data.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+
+                if (data.length === 0) {
+                    historyList.innerHTML = '<li class="text-gray-400 text-sm">No recorded sessions yet.</li>';
+                    return;
+                }
+
+                data.forEach(session => {
+                    const date = session.timestamp ? new Date(session.timestamp.seconds * 1000).toLocaleDateString() : 'Just now';
+                    const li = document.createElement('li');
+                    li.className = "bg-gray-800 p-2 rounded mb-2 text-sm border border-gray-700";
+                    li.innerHTML = `
+                        <div class="flex justify-between text-yellow-500 font-bold">
+                            <span>${date}</span>
+                            <span>${session.accuracy}% Acc</span>
+                        </div>
+                        <div class="flex justify-between text-gray-400 text-xs mt-1">
+                            <span>Hits: ${session.hits}</span>
+                            <span>Misses: ${session.misses}</span>
+                        </div>
+                    `;
+                    historyList.appendChild(li);
+                });
+            }, (error) => {
+                console.error("Error loading history:", error);
+            });
+        }
+    </script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
+        #game-container {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 0;
+        }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; width: 4px; height: 4px;
+            background-color: red; border-radius: 50%;
+            transform: translate(-50%, -50%); pointer-events: none; z-index: 10;
+            box-shadow: 0 0 4px white;
+        }
+        #hud {
+            position: absolute; bottom: 20px; left: 20px;
+            color: #fff; font-size: 24px; z-index: 10;
+            text-shadow: 2px 2px 0 #000;
+        }
+        #ammo-display { display: flex; gap: 5px; margin-top: 5px; }
+        .shell {
+            width: 15px; height: 40px; background: red;
+            border: 1px solid #333; border-radius: 2px;
+        }
+        .shell.spent { background: #333; opacity: 0.5; }
+        #controls-hint {
+            position: absolute; top: 20px; left: 20px;
+            color: rgba(255,255,255,0.7); font-size: 14px;
+            background: rgba(0,0,0,0.5); padding: 10px;
+            border-radius: 5px; pointer-events: none;
+        }
+        #message-center {
+            position: absolute; top: 30%; left: 50%;
+            transform: translate(-50%, -50%); color: yellow;
+            font-size: 48px; font-weight: bold;
+            text-shadow: 2px 2px 4px #000; pointer-events: none;
+            opacity: 0; transition: opacity 0.3s; text-align: center;
+        }
+        #start-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); display: flex;
+            flex-direction: column; align-items: center; justify-content: center;
+            color: white; z-index: 20;
+        }
+        
+        #session-panel {
+            position: absolute;
+            top: 20px;
+            right: -260px;
+            width: 300px;
+            max-height: 80vh;
+            background: rgba(0,0,0,0.95);
+            border: 1px solid #444;
+            padding: 15px;
+            padding-left: 50px;
+            color: white;
+            overflow-y: auto;
+            border-radius: 8px 0 0 8px;
+            display: none;
+            transition: right 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+            z-index: 50;
+            box-shadow: -5px 0 15px rgba(0,0,0,0.5);
+        }
+        
+        #session-panel:hover {
+            right: 0;
+        }
+
+        #panel-tab {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 40px;
+            background: #d97706;
+            color: #000;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            letter-spacing: 2px;
+            border-right: 1px solid #000;
+            border-radius: 6px 0 0 6px;
+            cursor: pointer;
+            font-size: 14px;
+            box-shadow: inset -2px 0 5px rgba(0,0,0,0.2);
+        }
+
+        .btn {
+            background: #d97706; color: white; padding: 10px 20px;
+            border: none; font-size: 18px; cursor: pointer;
+            border-radius: 4px; margin-top: 20px; font-weight: bold;
+        }
+        .btn:hover { background: #b45309; }
+        .reload-anim { animation: pulse 0.5s infinite; }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container"></div>
+    <div id="crosshair"></div>
+    
+    <div id="start-screen">
+        <h1 class="text-4xl font-bold mb-2 text-yellow-500">SKEET SHOOTER 3D</h1>
+        <p class="text-gray-300 mb-6">Realism Update</p>
+        <ul class="text-left text-sm space-y-2 mb-6 bg-gray-900 p-4 rounded border border-gray-700">
+            <li>🎯 <strong>SPACE</strong> to Pull</li>
+            <li>🖱️ <strong>MOUSE</strong> to Aim</li>
+            <li>🔥 <strong>CLICK</strong> to Fire (Birdshot)</li>
+            <li>🔄 <strong>R</strong> to Reload (or click 'R' on wall)</li>
+            <li>🦆 Ducks will ... react.</li>
+        </ul>
+        <button class="btn" id="start-btn">ENTER RANGE</button>
+    </div>
+
+    <div id="controls-hint">
+        [SPACE]: PULL TARGET<br>
+        [R] or CLICK WALL: RELOAD<br>
+        [ESC]: UNLOCK MOUSE / VIEW STATS
+    </div>
+
+    <div id="hud">
+        <div id="score">HITS: 0 | MISS: 0</div>
+        <div id="ammo-display">
+            <div class="shell" id="s1"></div>
+            <div class="shell" id="s2"></div>
+        </div>
+        <div id="status-text" class="text-sm mt-2 text-gray-400">READY</div>
+    </div>
+
+    <div id="message-center">PULL!</div>
+
+    <div id="session-panel">
+        <div id="panel-tab">STATS & HISTORY</div>
+        <h3 class="text-lg font-bold border-b border-gray-600 pb-2 mb-2 text-yellow-500">Session Report</h3>
+        <div class="mb-4">
+            <button id="save-btn" class="w-full bg-green-700 hover:bg-green-600 text-white text-xs py-1 px-2 rounded">SAVE SESSION</button>
+        </div>
+        <h4 class="text-xs uppercase text-gray-500 mb-2">History</h4>
+        <ul id="history-list" class="list-none p-0 m-0">
+            <li class="text-gray-500 text-sm">Loading...</li>
+        </ul>
+    </div>
+
+    <script>
+        // --- GAME ENGINE ---
+
+        // Config
+        const CONFIG = {
+            gravity: -9.8,
+            launchSpeed: 28,
+            shotCount: 12, // Number of pellets per shot (Birdshot)
+            spread: 0.08,  // Spread factor
+            maxAmmo: 2
+        };
+
+        // State
+        const state = {
+            hits: 0,
+            misses: 0,
+            ammo: 2,
+            isReloading: false,
+            clayActive: false,
+            canShoot: true
+        };
+
+        // Audio System
+        const AudioSys = {
+            ctx: null,
+            init: function() {
+                window.AudioContext = window.AudioContext || window.webkitAudioContext;
+                this.ctx = new AudioContext();
+            },
+            playTone: function(freq, type, duration, vol = 0.1) {
+                if(!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+                gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + duration);
+            },
+            playNoise: function(duration, vol = 0.5) {
+                if(!this.ctx) return;
+                const bufferSize = this.ctx.sampleRate * duration;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                const gain = this.ctx.createGain();
+                const filter = this.ctx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.value = 800; // Lowered filter frequency for darker noise
+                gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(this.ctx.destination);
+                noise.start();
+            },
+            playShot: function() {
+                if(!this.ctx) return;
+                this.playNoise(0.6, 1.0); // Longer, louder boom
+                // Add a deep low-end punch (60Hz sawtooth falling)
+                this.playTone(60, 'sawtooth', 0.4, 0.5); 
+                // Mechanical cycle (lower pitch, slightly delayed)
+                setTimeout(() => this.playTone(100, 'sawtooth', 0.15, 0.1), 120); 
+            },
+            playReload: function() {
+                this.playTone(400, 'square', 0.1, 0.2);
+                setTimeout(() => this.playTone(600, 'square', 0.05, 0.1), 100);
+            },
+            playPull: function() {
+                this.playTone(100, 'triangle', 0.3, 0.3);
+                this.playNoise(0.2, 0.2);
+            },
+            playHit: function() {
+                this.playTone(1200, 'triangle', 0.1, 0.2);
+                this.playTone(1500, 'sawtooth', 0.1, 0.2);
+                this.playNoise(0.1, 0.3);
+            },
+            playQuack: function() {
+                if(!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(400, this.ctx.currentTime);
+                osc.frequency.linearRampToValueAtTime(200, this.ctx.currentTime + 0.15);
+                gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.15);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.2);
+            },
+            playFart: function() {
+                if(!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(120, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(50, this.ctx.currentTime + 0.5);
+                
+                // Add some noise for texture
+                const bufferSize = this.ctx.sampleRate * 0.5;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                const noiseGain = this.ctx.createGain();
+                noiseGain.gain.value = 0.2;
+                noise.connect(noiseGain);
+                noiseGain.connect(this.ctx.destination);
+
+                gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
+                
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                
+                osc.start();
+                noise.start();
+                osc.stop(this.ctx.currentTime + 0.5);
+            }
+        };
+
+        // Three.js Globals
+        let scene, camera, renderer;
+        let gun, gunBarrelGroup;
+        let clay, particles = [];
+        let birds = [];
+        let poops = [];
+        let muzzleFlashMesh;
+        let raycaster;
+        let reloadTargets = [];
+        let lastTime = 0;
+        
+        let clayVelocity = new THREE.Vector3();
+        
+        function init() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.Fog(0x87CEEB, 20, 150);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            
+            const container = document.getElementById('game-container');
+            if (container) {
+                container.appendChild(renderer.domElement);
+            } else {
+                document.body.appendChild(renderer.domElement);
+            }
+
+            // --- SKY SPHERE ---
+            const vertexShader = `
+                varying vec3 vWorldPosition;
+                void main() {
+                    vec4 worldPosition = modelMatrix * vec4( position, 1.0 );
+                    vWorldPosition = worldPosition.xyz;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+                }
+            `;
+            const fragmentShader = `
+                uniform vec3 topColor;
+                uniform vec3 bottomColor;
+                uniform float offset;
+                uniform float exponent;
+                varying vec3 vWorldPosition;
+                void main() {
+                    float h = normalize( vWorldPosition + offset ).y;
+                    gl_FragColor = vec4( mix( bottomColor, topColor, max( pow( max( h , 0.0), exponent ), 0.0 ) ), 1.0 );
+                }
+            `;
+            const uniforms = {
+                topColor: { value: new THREE.Color( 0x0077ff ) },
+                bottomColor: { value: new THREE.Color( 0xffffff ) },
+                offset: { value: 33 },
+                exponent: { value: 0.6 }
+            };
+            const skyGeo = new THREE.SphereGeometry( 500, 32, 15 );
+            const skyMat = new THREE.ShaderMaterial( { vertexShader: vertexShader, fragmentShader: fragmentShader, uniforms: uniforms, side: THREE.BackSide } );
+            const sky = new THREE.Mesh( skyGeo, skyMat );
+            scene.add( sky );
+
+            // --- GRASS ---
+            const grassCanvas = document.createElement('canvas');
+            grassCanvas.width = 512;
+            grassCanvas.height = 512;
+            const ctx = grassCanvas.getContext('2d');
+            ctx.fillStyle = '#228B22'; // Base Green
+            ctx.fillRect(0,0,512,512);
+            // Add noise
+            for(let i=0; i<50000; i++) {
+                ctx.fillStyle = Math.random() > 0.5 ? '#1a6b1a' : '#2e8b57';
+                ctx.fillRect(Math.random()*512, Math.random()*512, 2, 2);
+            }
+            const grassTexture = new THREE.CanvasTexture(grassCanvas);
+            grassTexture.wrapS = THREE.RepeatWrapping;
+            grassTexture.wrapT = THREE.RepeatWrapping;
+            grassTexture.repeat.set(50, 50);
+
+            const planeGeometry = new THREE.PlaneGeometry(200, 200);
+            const planeMaterial = new THREE.MeshStandardMaterial({ map: grassTexture });
+            const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+            plane.rotation.x = -Math.PI / 2;
+            plane.receiveShadow = true;
+            scene.add(plane);
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            dirLight.position.set(50, 100, 50);
+            dirLight.castShadow = true;
+            dirLight.shadow.camera.left = -50;
+            dirLight.shadow.camera.right = 50;
+            dirLight.shadow.camera.top = 50;
+            dirLight.shadow.camera.bottom = -50;
+            dirLight.shadow.mapSize.width = 2048;
+            dirLight.shadow.mapSize.height = 2048;
+            scene.add(dirLight);
+
+            // Buildings
+            createTrapHouses();
+
+            // Gun
+            createGun();
+
+            raycaster = new THREE.Raycaster();
+
+            // Listeners
+            window.addEventListener('resize', onWindowResize, false);
+            document.addEventListener('click', onClick, false);
+            document.addEventListener('keydown', onKeyDown, false);
+            
+            // Start
+            const startBtn = document.getElementById('start-btn');
+            startBtn.addEventListener('click', () => {
+                document.body.requestPointerLock();
+                document.getElementById('start-screen').style.display = 'none';
+                document.getElementById('session-panel').style.display = 'block';
+                AudioSys.init();
+                startBirdSpawner();
+            });
+
+            document.getElementById('save-btn').addEventListener('click', () => {
+                if (state.hits + state.misses > 0) {
+                    window.saveSessionReport(state.hits, state.misses);
+                    state.hits = 0; state.misses = 0;
+                    updateHUD();
+                    showMessage("SESSION SAVED", 2000);
+                } else {
+                    showMessage("NO DATA TO SAVE", 2000);
+                }
+            });
+
+            animate();
+        }
+
+        function createRTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#654321'; // Darker wood brown for contrast
+            ctx.fillRect(0,0,256,256);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = 'bold 200px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('R', 128, 128);
+            
+            // Add border
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 10;
+            ctx.strokeRect(5,5,246,246);
+            
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function createTrapHouses() {
+            const trapGeo = new THREE.BoxGeometry(4, 3, 4);
+            const trapMat = new THREE.MeshStandardMaterial({ color: 0x8B4513 }); // SaddleBrown for wood
+            const trap = new THREE.Mesh(trapGeo, trapMat);
+            trap.position.set(-15, 1.5, -20);
+            trap.castShadow = true;
+            scene.add(trap);
+
+            const highTrapGeo = new THREE.BoxGeometry(4, 8, 4);
+            const highTrap = new THREE.Mesh(highTrapGeo, trapMat);
+            highTrap.position.set(15, 4, -20);
+            highTrap.castShadow = true;
+            scene.add(highTrap);
+
+            // Create R signs
+            const rTex = createRTexture();
+            const rMat = new THREE.MeshBasicMaterial({ map: rTex });
+            const rGeo = new THREE.PlaneGeometry(2, 2);
+
+            // Low House Sign
+            const r1 = new THREE.Mesh(rGeo, rMat);
+            r1.position.set(-15, 1.5, -17.9); // Slightly in front of z=-18 face (which faces shooter approx)
+            scene.add(r1);
+            reloadTargets.push(r1);
+
+            // High House Sign
+            const r2 = new THREE.Mesh(rGeo, rMat);
+            r2.position.set(15, 4, -17.9);
+            scene.add(r2);
+            reloadTargets.push(r2);
+        }
+
+        function createGun() {
+            gun = new THREE.Group();
+
+            const blackMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 });
+            const metalMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.8, roughness: 0.2 });
+
+            // Stock
+            const stock = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.2, 0.6), blackMat);
+            stock.position.set(0, -0.2, 0.4);
+            gun.add(stock);
+
+            // Receiver
+            const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.22, 0.4), blackMat);
+            receiver.position.set(0, -0.15, 0);
+            gun.add(receiver);
+            
+            // Sights (Rear) attached to receiver
+            const sight = new THREE.Mesh(new THREE.TorusGeometry(0.02, 0.005, 8, 16), blackMat);
+            sight.position.set(0, -0.05, 0.1);
+            gun.add(sight);
+
+            // --- Barrel Assembly Group (For Breaking Animation) ---
+            gunBarrelGroup = new THREE.Group();
+            // Pivot point at the front of the receiver
+            gunBarrelGroup.position.set(0, -0.15, -0.2); 
+            gun.add(gunBarrelGroup);
+
+            // Barrel (Position relative to gunBarrelGroup origin)
+            const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.2, 16), metalMat);
+            barrel.rotation.x = -Math.PI / 2;
+            // Original: (0, -0.1, -0.6). Diff from pivot(0, -0.15, -0.2) is (0, +0.05, -0.4)
+            barrel.position.set(0, 0.05, -0.4); 
+            gunBarrelGroup.add(barrel);
+
+            // Mag Tube
+            const mag = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.0, 16), blackMat);
+            mag.rotation.x = -Math.PI / 2;
+            // Original: (0, -0.18, -0.5). Diff from pivot is (0, -0.03, -0.3)
+            mag.position.set(0, -0.03, -0.3);
+            gunBarrelGroup.add(mag);
+
+            // Front Sight
+            const frontSight = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.04, 0.01), blackMat);
+            // Original: (0, -0.06, -1.15). Diff from pivot is (0, +0.09, -0.95)
+            frontSight.position.set(0, 0.09, -0.95);
+            gunBarrelGroup.add(frontSight);
+
+            // Muzzle Flash Geometry
+            const flashGeo = new THREE.ConeGeometry(0.1, 0.5, 8, 1, true);
+            flashGeo.rotateX(Math.PI / 2);
+            const flashMat = new THREE.MeshBasicMaterial({ 
+                color: 0xFFaa00, 
+                transparent: true, 
+                opacity: 0.8, 
+                blending: THREE.AdditiveBlending 
+            });
+            muzzleFlashMesh = new THREE.Mesh(flashGeo, flashMat);
+            // Original: (0, -0.1, -1.45). Diff from pivot is (0, +0.05, -1.25)
+            muzzleFlashMesh.position.set(0, 0.05, -1.25); 
+            muzzleFlashMesh.visible = false;
+            gunBarrelGroup.add(muzzleFlashMesh);
+
+            scene.add(gun);
+            camera.add(gun);
+            gun.position.set(0.2, -0.3, -0.5);
+            scene.add(camera);
+            camera.position.set(0, 1.7, 0);
+        }
+
+        // --- BIRD SYSTEM ---
+        function createBird() {
+            const birdGroup = new THREE.Group();
+            // Body
+            const body = new THREE.Mesh(
+                new THREE.ConeGeometry(0.2, 0.6, 8),
+                new THREE.MeshStandardMaterial({ color: 0x4a3728 }) // Duck brown
+            );
+            body.rotation.x = Math.PI / 2;
+            birdGroup.add(body);
+            // Wings
+            const wingGeo = new THREE.BoxGeometry(0.6, 0.05, 0.3);
+            const wingMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+            const lWing = new THREE.Mesh(wingGeo, wingMat);
+            lWing.position.set(0.4, 0, 0);
+            birdGroup.add(lWing);
+            const rWing = new THREE.Mesh(wingGeo, wingMat);
+            rWing.position.set(-0.4, 0, 0);
+            birdGroup.add(rWing);
+
+            birdGroup.userData = { 
+                velocity: new THREE.Vector3(), 
+                wings: [lWing, rWing],
+                wingSpeed: 0.2 + Math.random() * 0.1,
+                flapOffset: Math.random() * 10
+            };
+            return birdGroup;
+        }
+
+        function startBirdSpawner() {
+            setInterval(() => {
+                if (birds.length < 5 && Math.random() > 0.6) {
+                    spawnBird();
+                }
+            }, 3000);
+        }
+
+        function spawnBird() {
+            const bird = createBird();
+            const fromLeft = Math.random() > 0.5;
+            const h = 10 + Math.random() * 15; // Altitude
+            const d = -30 - Math.random() * 20; // Depth
+            
+            if (fromLeft) {
+                bird.position.set(-50, h, d);
+                bird.userData.velocity.set(5 + Math.random() * 5, 0, 0);
+                bird.rotation.y = Math.PI / 2;
+            } else {
+                bird.position.set(50, h, d);
+                bird.userData.velocity.set(-(5 + Math.random() * 5), 0, 0);
+                bird.rotation.y = -Math.PI / 2;
+            }
+            scene.add(bird);
+            birds.push(bird);
+        }
+
+        function spawnPoop(position) {
+            const poopGeo = new THREE.SphereGeometry(0.08, 8, 8);
+            const poopMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF }); // White poop
+            const poop = new THREE.Mesh(poopGeo, poopMat);
+            poop.position.copy(position);
+            scene.add(poop);
+            poops.push({ mesh: poop, velocity: new THREE.Vector3(0, -2, 0) });
+        }
+
+        // --- GAMEPLAY ---
+
+        function spawnClay() {
+            if (state.clayActive) return;
+            const geometry = new THREE.CylinderGeometry(0.3, 0.3, 0.05, 32);
+            const material = new THREE.MeshStandardMaterial({ color: 0xFF4500 });
+            clay = new THREE.Mesh(geometry, material);
+            
+            const fromLeft = Math.random() > 0.5;
+            if (fromLeft) {
+                clay.position.set(-15, 1.5, -20);
+                clayVelocity.set(15 + Math.random() * 5, 10 + Math.random() * 5, -5 + Math.random() * 2);
+            } else {
+                clay.position.set(15, 4, -20);
+                clayVelocity.set(-15 - Math.random() * 5, 5 + Math.random() * 5, -5 + Math.random() * 2);
+            }
+            clay.castShadow = true;
+            clay.rotation.x = Math.PI / 2;
+            scene.add(clay);
+            state.clayActive = true;
+            state.ammo = 2;
+            showMessage("");
+            updateHUD();
+            AudioSys.playPull();
+        }
+
+        function breakClay() {
+            if (!clay) return;
+            const particleGeo = new THREE.TetrahedronGeometry(0.05);
+            const particleMat = new THREE.MeshBasicMaterial({ color: 0xFF4500 });
+            for(let i=0; i<15; i++) {
+                const mesh = new THREE.Mesh(particleGeo, particleMat);
+                mesh.position.copy(clay.position);
+                mesh.userData.velocity = new THREE.Vector3(
+                    (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10
+                );
+                scene.add(mesh);
+                particles.push(mesh);
+            }
+            scene.remove(clay);
+            clay = null;
+            state.clayActive = false;
+            state.hits++;
+            updateHUD();
+            showMessage("HIT!", 1000);
+            AudioSys.playHit();
+        }
+
+        function missClay() {
+            if (!clay) return;
+            scene.remove(clay);
+            clay = null;
+            state.clayActive = false;
+            state.misses++;
+            updateHUD();
+            showMessage("MISS", 1000);
+        }
+
+        function shoot() {
+            if (state.ammo <= 0) {
+                showMessage("RELOAD! [R]", 500);
+                return;
+            }
+            if (state.isReloading) return;
+
+            // 1. Recoil Animation
+            const originalPos = gun.position.clone();
+            // Increased kickback (Z) from 0.2 to 0.4 and added slight muzzle rise (Y)
+            const recoilPos = originalPos.clone().add(new THREE.Vector3(0, 0.05, 0.4));
+            let t = 0;
+            const recoilAnim = setInterval(() => {
+                t += 0.2;
+                if(t < 1) gun.position.lerp(recoilPos, 0.5);
+                else if (t < 2) gun.position.lerp(originalPos, 0.2);
+                else {
+                    gun.position.copy(originalPos);
+                    clearInterval(recoilAnim);
+                }
+            }, 16);
+
+            // 2. Muzzle Flash (Flame)
+            muzzleFlashMesh.visible = true;
+            muzzleFlashMesh.rotation.z = Math.random() * Math.PI; // Rotate flame randomly
+            muzzleFlashMesh.scale.set(1 + Math.random()*0.5, 1 + Math.random(), 1 + Math.random()*0.5);
+            setTimeout(() => muzzleFlashMesh.visible = false, 50);
+
+            state.ammo--;
+            AudioSys.playShot();
+            updateHUD();
+
+            // 3. Birdshot Logic (Multiple Pellets)
+            let clayHit = false;
+
+            // Get camera direction (center aim)
+            const aimDir = new THREE.Vector3();
+            camera.getWorldDirection(aimDir);
+
+            for (let i = 0; i < CONFIG.shotCount; i++) {
+                // Perturb direction for spread
+                const spreadDir = aimDir.clone();
+                spreadDir.x += (Math.random() - 0.5) * CONFIG.spread;
+                spreadDir.y += (Math.random() - 0.5) * CONFIG.spread;
+                spreadDir.z += (Math.random() - 0.5) * CONFIG.spread;
+                spreadDir.normalize();
+
+                raycaster.set(camera.position, spreadDir);
+
+                // Check Clay
+                if (state.clayActive && clay && !clayHit) {
+                    const hitSphere = new THREE.Sphere(clay.position, 0.8);
+                    const ray = raycaster.ray;
+                    const vecToCenter = new THREE.Vector3().subVectors(hitSphere.center, ray.origin);
+                    const tClosest = vecToCenter.dot(ray.direction);
+                    
+                    if (tClosest > 0) {
+                        const closestPoint = new THREE.Vector3().copy(ray.direction).multiplyScalar(tClosest).add(ray.origin);
+                        if (closestPoint.distanceTo(hitSphere.center) < hitSphere.radius) {
+                            breakClay();
+                            clayHit = true; // Only break once
+                        }
+                    }
+                }
+
+                // Check Birds
+                const birdIntersects = raycaster.intersectObjects(birds, true); // true for recursive
+                if (birdIntersects.length > 0) {
+                    // Hit a bird!
+                    const hitObj = birdIntersects[0].object;
+                    // Find the parent group to manipulate
+                    let parentGroup = hitObj;
+                    while(parentGroup.parent && parentGroup.parent.type !== 'Scene') {
+                        parentGroup = parentGroup.parent;
+                    }
+
+                    // Effects
+                    AudioSys.playQuack();
+                    AudioSys.playFart(); // <-- FART!
+                    spawnPoop(parentGroup.position); // <-- POOP!
+                    
+                    // Make bird freak out (speed up and fly up)
+                    parentGroup.userData.velocity.y += 5;
+                    parentGroup.userData.velocity.x *= 1.5;
+                }
+            }
+        }
+
+        function reload() {
+            if (state.ammo === 2 || state.isReloading) return;
+            state.isReloading = true;
+            document.getElementById('status-text').innerText = "RELOADING...";
+            document.getElementById('status-text').classList.add('reload-anim');
+            
+            // Break Action Animation
+            const duration = 1000;
+            const startRot = 0;
+            // Changed from positive to negative to break DOWN instead of UP
+            const endRot = -Math.PI / 4; // 45 degrees down (Negative rotation tips front down)
+            let startTime = null;
+
+            function animateReload(time) {
+                if (!startTime) startTime = time;
+                const progress = (time - startTime) / duration;
+                
+                if (progress < 0.3) {
+                    // Break open
+                    const p = progress / 0.3;
+                    gunBarrelGroup.rotation.x = p * endRot;
+                } else if (progress < 0.7) {
+                    // Stay open
+                    gunBarrelGroup.rotation.x = endRot;
+                } else if (progress < 1.0) {
+                    // Close
+                    const p = (progress - 0.7) / 0.3;
+                    gunBarrelGroup.rotation.x = endRot * (1 - p);
+                } else {
+                    gunBarrelGroup.rotation.x = 0;
+                    return; // Stop animation loop, reloading finishes via setTimeout below
+                }
+                requestAnimationFrame(animateReload);
+            }
+            requestAnimationFrame(animateReload);
+            
+            AudioSys.playReload();
+
+            setTimeout(() => {
+                state.ammo = 2;
+                state.isReloading = false;
+                document.getElementById('status-text').innerText = "READY";
+                document.getElementById('status-text').classList.remove('reload-anim');
+                updateHUD();
+            }, 1000);
+        }
+
+        // --- LOOP ---
+        function onKeyDown(event) {
+            if (event.code === 'Space') {
+                if (!state.clayActive) spawnClay();
+            }
+            if (event.code === 'KeyR') reload();
+        }
+
+        function onClick() {
+            if (document.pointerLockElement === document.body) {
+                // Check if aiming at an "R" sign for reload
+                raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+                const intersects = raycaster.intersectObjects(reloadTargets);
+                if (intersects.length > 0) {
+                    reload();
+                } else {
+                    // Normal shooting
+                    shoot();
+                }
+            }
+        }
+
+        function onMouseMove( event ) {
+            if (document.pointerLockElement === document.body) {
+                camera.rotation.y -= event.movementX * 0.002;
+                camera.rotation.x -= event.movementY * 0.002;
+                camera.rotation.x = Math.max( - Math.PI / 2, Math.min( Math.PI / 2, camera.rotation.x ) );
+            }
+        }
+        document.addEventListener( 'mousemove', onMouseMove, false );
+
+        function updateHUD() {
+            document.getElementById('score').innerText = `HITS: ${state.hits} | MISS: ${state.misses}`;
+            const s1 = document.getElementById('s1');
+            const s2 = document.getElementById('s2');
+            s1.className = state.ammo >= 1 ? 'shell' : 'shell spent';
+            s2.className = state.ammo >= 2 ? 'shell' : 'shell spent';
+        }
+
+        function showMessage(text, duration) {
+            const el = document.getElementById('message-center');
+            el.innerText = text;
+            el.style.opacity = 1;
+            if (duration) setTimeout(() => el.style.opacity = 0, duration);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+            const delta = (time - lastTime) / 1000;
+            lastTime = time;
+
+            // Update Clay
+            if (state.clayActive && clay) {
+                clayVelocity.y += CONFIG.gravity * delta;
+                clay.position.add(clayVelocity.clone().multiplyScalar(delta));
+                clay.rotation.z += 10 * delta;
+                if (clay.position.y < 0) missClay();
+            }
+
+            // Update Birds
+            for (let i = birds.length - 1; i >= 0; i--) {
+                const b = birds[i];
+                b.position.add(b.userData.velocity.clone().multiplyScalar(delta));
+                // Flap wings
+                const flapSpeed = b.userData.wingSpeed;
+                const angle = Math.sin(time * 0.01 + b.userData.flapOffset) * 0.5;
+                b.userData.wings[0].rotation.z = angle;
+                b.userData.wings[1].rotation.z = -angle;
+
+                // Remove if far away
+                if (Math.abs(b.position.x) > 100) {
+                    scene.remove(b);
+                    birds.splice(i, 1);
+                }
+            }
+
+            // Update Poops
+            for (let i = poops.length - 1; i >= 0; i--) {
+                const p = poops[i];
+                p.velocity.y += CONFIG.gravity * delta;
+                p.mesh.position.add(p.velocity.clone().multiplyScalar(delta));
+                if (p.mesh.position.y < 0) {
+                    scene.remove(p.mesh);
+                    poops.splice(i, 1);
+                }
+            }
+
+            // Update Particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.userData.velocity.y += CONFIG.gravity * delta;
+                p.position.add(p.userData.velocity.clone().multiplyScalar(delta));
+                p.rotation.x += delta;
+                if (p.position.y < 0) {
+                    scene.remove(p);
+                    particles.splice(i, 1);
+                }
+            }
+            renderer.render(scene, camera);
+        }
+
+        init();
+    </script>
+</body>
+</html>
