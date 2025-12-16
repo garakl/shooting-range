@@ -2,1029 +2,403 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>3D Skeet Shooter - Benelli M4 Edition</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>RangeTracker</title>
     
-    <!-- Firebase Imports -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // --- Firebase Configuration & Logic ---
-        const firebaseConfig = JSON.parse(localStorage.getItem('firebase_config') || '{}') || {};
-        const injectedConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-        const finalConfig = injectedConfig || firebaseConfig;
-
-        const app = initializeApp(finalConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'skeet-shooter-v1';
-
-        let currentUser = null;
-
-        const initAuth = async () => {
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                await signInWithCustomToken(auth, __initial_auth_token);
-            } else {
-                await signInAnonymously(auth);
-            }
-        };
-
-        initAuth();
-
-        onAuthStateChanged(auth, (user) => {
-            if (user) {
-                currentUser = user;
-                loadSessionHistory();
-                console.log("User authenticated:", user.uid);
-            }
-        });
-
-        // --- Data Handling ---
-        window.saveSessionReport = async (hits, misses) => {
-            if (!currentUser) return;
-            try {
-                const reportsRef = collection(db, 'artifacts', appId, 'users', currentUser.uid, 'shooting_sessions');
-                await addDoc(reportsRef, {
-                    hits: hits,
-                    misses: misses,
-                    accuracy: hits + misses > 0 ? Math.round((hits / (hits + misses)) * 100) : 0,
-                    timestamp: serverTimestamp(),
-                    device: 'Benelli M4 Simulation'
-                });
-                console.log("Session saved!");
-            } catch (e) {
-                console.error("Error saving session:", e);
-            }
-        };
-
-        function loadSessionHistory() {
-            if (!currentUser) return;
-            const reportsRef = collection(db, 'artifacts', appId, 'users', currentUser.uid, 'shooting_sessions');
-            const q = query(reportsRef); 
-
-            onSnapshot(q, (snapshot) => {
-                const historyList = document.getElementById('history-list');
-                historyList.innerHTML = '';
-                
-                const data = [];
-                snapshot.forEach(doc => {
-                    data.push({ id: doc.id, ...doc.data() });
-                });
-
-                data.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-
-                if (data.length === 0) {
-                    historyList.innerHTML = '<li class="text-gray-400 text-sm">No recorded sessions yet.</li>';
-                    return;
-                }
-
-                data.forEach(session => {
-                    const date = session.timestamp ? new Date(session.timestamp.seconds * 1000).toLocaleDateString() : 'Just now';
-                    const li = document.createElement('li');
-                    li.className = "bg-gray-800 p-2 rounded mb-2 text-sm border border-gray-700";
-                    li.innerHTML = `
-                        <div class="flex justify-between text-yellow-500 font-bold">
-                            <span>${date}</span>
-                            <span>${session.accuracy}% Acc</span>
-                        </div>
-                        <div class="flex justify-between text-gray-400 text-xs mt-1">
-                            <span>Hits: ${session.hits}</span>
-                            <span>Misses: ${session.misses}</span>
-                        </div>
-                    `;
-                    historyList.appendChild(li);
-                });
-            }, (error) => {
-                console.error("Error loading history:", error);
-            });
-        }
-    </script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
-        #game-container {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            z-index: 0;
-        }
-        #crosshair {
-            position: absolute; top: 50%; left: 50%; 
-            width: 120px; height: 120px;
-            transform: translate(-50%, -50%); pointer-events: none; z-index: 10;
-        }
-        #hud {
-            position: absolute; bottom: 20px; left: 20px;
-            color: #fff; font-size: 24px; z-index: 10;
-            text-shadow: 2px 2px 0 #000;
-        }
-        #ammo-display { display: flex; gap: 5px; margin-top: 5px; }
-        .shell {
-            width: 15px; height: 40px; background: red;
-            border: 1px solid #333; border-radius: 2px;
-        }
-        .shell.spent { background: #333; opacity: 0.5; }
-        #controls-hint {
-            position: absolute; top: 20px; left: 20px;
-            color: rgba(255,255,255,0.7); font-size: 14px;
-            background: rgba(0,0,0,0.5); padding: 10px;
-            border-radius: 5px; pointer-events: none;
-        }
-        #message-center {
-            position: absolute; top: 30%; left: 50%;
-            transform: translate(-50%, -50%); color: yellow;
-            font-size: 48px; font-weight: bold;
-            text-shadow: 2px 2px 4px #000; pointer-events: none;
-            opacity: 0; transition: opacity 0.3s; text-align: center;
-        }
-        #start-screen {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8); display: flex;
-            flex-direction: column; align-items: center; justify-content: center;
-            color: white; z-index: 20;
-        }
-        
-        #session-panel {
-            position: absolute;
-            top: 20px;
-            right: -260px;
-            width: 300px;
-            max-height: 80vh;
-            background: rgba(0,0,0,0.95);
-            border: 1px solid #444;
-            padding: 15px;
-            padding-left: 50px;
-            color: white;
-            overflow-y: auto;
-            border-radius: 8px 0 0 8px;
+        /* Hide scrollbar for Chrome, Safari and Opera */
+        .no-scrollbar::-webkit-scrollbar {
             display: none;
-            transition: right 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
-            z-index: 50;
-            box-shadow: -5px 0 15px rgba(0,0,0,0.5);
+        }
+        /* Hide scrollbar for IE, Edge and Firefox */
+        .no-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+        /* Safe area handling */
+        .pb-safe {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        .pt-safe {
+            padding-top: env(safe-area-inset-top);
         }
         
-        #session-panel:hover {
-            right: 0;
+        /* Smooth scrolling */
+        html {
+            scroll-behavior: smooth;
         }
-
-        #panel-tab {
-            position: absolute;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            width: 40px;
-            background: #d97706;
-            color: #000;
-            writing-mode: vertical-rl;
-            text-orientation: mixed;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            letter-spacing: 2px;
-            border-right: 1px solid #000;
-            border-radius: 6px 0 0 6px;
-            cursor: pointer;
-            font-size: 14px;
-            box-shadow: inset -2px 0 5px rgba(0,0,0,0.2);
-        }
-
-        .btn {
-            background: #d97706; color: white; padding: 10px 20px;
-            border: none; font-size: 18px; cursor: pointer;
-            border-radius: 4px; margin-top: 20px; font-weight: bold;
-        }
-        .btn:hover { background: #b45309; }
-        .reload-anim { animation: pulse 0.5s infinite; }
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.1); }
-            100% { transform: scale(1); }
+        
+        /* Tap highlight removal */
+        * {
+            -webkit-tap-highlight-color: transparent;
         }
     </style>
-</head>
-<body>
-
-    <div id="game-container"></div>
-    <div id="crosshair">
-        <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <!-- Outer Target Ring (Faint) -->
-            <circle cx="50" cy="50" r="45" stroke="#ff0000" stroke-width="1" stroke-opacity="0.4"/>
-            <!-- Inner Aiming Ring (Bold) -->
-            <circle cx="50" cy="50" r="20" stroke="#ff0000" stroke-width="2"/>
-            <!-- Center Dot -->
-            <circle cx="50" cy="50" r="2" fill="#ff0000"/>
-            <!-- Horizontal Crosshair -->
-            <line x1="5" y1="50" x2="35" y2="50" stroke="#ff0000" stroke-width="2"/>
-            <line x1="65" y1="50" x2="95" y2="50" stroke="#ff0000" stroke-width="2"/>
-            <!-- Vertical Crosshair -->
-            <line x1="50" y1="5" x2="50" y2="35" stroke="#ff0000" stroke-width="2"/>
-            <line x1="50" y1="65" x2="50" y2="95" stroke="#ff0000" stroke-width="2"/>
-        </svg>
-    </div>
-    
-    <div id="start-screen">
-        <h1 class="text-4xl font-bold mb-2 text-yellow-500">SKEET SHOOTER 3D</h1>
-        <p class="text-gray-300 mb-6">Realism Update</p>
-        <ul class="text-left text-sm space-y-2 mb-6 bg-gray-900 p-4 rounded border border-gray-700">
-            <li>🎯 <strong>SPACE</strong> to Pull</li>
-            <li>🖱️ <strong>MOUSE</strong> to Aim</li>
-            <li>🔥 <strong>CLICK</strong> to Fire (Birdshot)</li>
-            <li>🔄 <strong>R</strong> to Reload (or click 'R' on wall)</li>
-            <li>🦆 Ducks will ... react.</li>
-        </ul>
-        <button class="btn" id="start-btn">ENTER RANGE</button>
-    </div>
-
-    <div id="controls-hint">
-        [SPACE]: PULL TARGET<br>
-        [R] or CLICK WALL: RELOAD<br>
-        [ESC]: UNLOCK MOUSE / VIEW STATS
-    </div>
-
-    <div id="hud">
-        <div id="score">HITS: 0 | MISS: 0</div>
-        <div id="ammo-display">
-            <div class="shell" id="s1"></div>
-            <div class="shell" id="s2"></div>
-        </div>
-        <div id="status-text" class="text-sm mt-2 text-gray-400">READY</div>
-    </div>
-
-    <div id="message-center">PULL!</div>
-
-    <div id="session-panel">
-        <div id="panel-tab">STATS & HISTORY</div>
-        <h3 class="text-lg font-bold border-b border-gray-600 pb-2 mb-2 text-yellow-500">Session Report</h3>
-        <div class="mb-4">
-            <button id="save-btn" class="w-full bg-green-700 hover:bg-green-600 text-white text-xs py-1 px-2 rounded">SAVE SESSION</button>
-        </div>
-        <h4 class="text-xs uppercase text-gray-500 mb-2">History</h4>
-        <ul id="history-list" class="list-none p-0 m-0">
-            <li class="text-gray-500 text-sm">Loading...</li>
-        </ul>
-    </div>
-
     <script>
-        // --- GAME ENGINE ---
-
-        // Config
-        const CONFIG = {
-            gravity: -9.8,
-            launchSpeed: 28,
-            shotCount: 12, // Number of pellets per shot (Birdshot)
-            spread: 0.08,  // Spread factor
-            maxAmmo: 2
-        };
-
-        // State
-        const state = {
-            hits: 0,
-            misses: 0,
-            ammo: 2,
-            isReloading: false,
-            clayActive: false,
-            canShoot: true
-        };
-
-        // Audio System
-        const AudioSys = {
-            ctx: null,
-            init: function() {
-                window.AudioContext = window.AudioContext || window.webkitAudioContext;
-                this.ctx = new AudioContext();
-            },
-            playTone: function(freq, type, duration, vol = 0.1) {
-                if(!this.ctx) return;
-                const osc = this.ctx.createOscillator();
-                const gain = this.ctx.createGain();
-                osc.type = type;
-                osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
-                gain.gain.setValueAtTime(vol, this.ctx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
-                osc.connect(gain);
-                gain.connect(this.ctx.destination);
-                osc.start();
-                osc.stop(this.ctx.currentTime + duration);
-            },
-            playNoise: function(duration, vol = 0.5) {
-                if(!this.ctx) return;
-                const bufferSize = this.ctx.sampleRate * duration;
-                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-                const data = buffer.getChannelData(0);
-                for (let i = 0; i < bufferSize; i++) {
-                    data[i] = Math.random() * 2 - 1;
+        tailwind.config = {
+            theme: {
+                extend: {
+                    boxShadow: {
+                        'up': '0 -4px 6px -1px rgba(0, 0, 0, 0.05), 0 -2px 4px -1px rgba(0, 0, 0, 0.03)',
+                    }
                 }
-                const noise = this.ctx.createBufferSource();
-                noise.buffer = buffer;
-                const gain = this.ctx.createGain();
-                const filter = this.ctx.createBiquadFilter();
-                filter.type = 'lowpass';
-                filter.frequency.value = 800; // Lowered filter frequency for darker noise
-                gain.gain.setValueAtTime(vol, this.ctx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
-                noise.connect(filter);
-                filter.connect(gain);
-                gain.connect(this.ctx.destination);
-                noise.start();
-            },
-            playShot: function() {
-                if(!this.ctx) return;
-                this.playNoise(0.6, 1.0); // Longer, louder boom
-                // Add a deep low-end punch (60Hz sawtooth falling)
-                this.playTone(60, 'sawtooth', 0.4, 0.5); 
-                // Mechanical cycle (lower pitch, slightly delayed)
-                setTimeout(() => this.playTone(100, 'sawtooth', 0.15, 0.1), 120); 
-            },
-            playReload: function() {
-                this.playTone(400, 'square', 0.1, 0.2);
-                setTimeout(() => this.playTone(600, 'square', 0.05, 0.1), 100);
-            },
-            playPull: function() {
-                this.playTone(100, 'triangle', 0.3, 0.3);
-                this.playNoise(0.2, 0.2);
-            },
-            playHit: function() {
-                this.playTone(1200, 'triangle', 0.1, 0.2);
-                this.playTone(1500, 'sawtooth', 0.1, 0.2);
-                this.playNoise(0.1, 0.3);
-            },
-            playQuack: function() {
-                if(!this.ctx) return;
-                const osc = this.ctx.createOscillator();
-                const gain = this.ctx.createGain();
-                osc.type = 'sawtooth';
-                osc.frequency.setValueAtTime(400, this.ctx.currentTime);
-                osc.frequency.linearRampToValueAtTime(200, this.ctx.currentTime + 0.15);
-                gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-                gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.15);
-                osc.connect(gain);
-                gain.connect(this.ctx.destination);
-                osc.start();
-                osc.stop(this.ctx.currentTime + 0.2);
-            },
-            playFart: function() {
-                if(!this.ctx) return;
-                const osc = this.ctx.createOscillator();
-                const gain = this.ctx.createGain();
-                osc.type = 'sawtooth';
-                osc.frequency.setValueAtTime(120, this.ctx.currentTime);
-                osc.frequency.exponentialRampToValueAtTime(50, this.ctx.currentTime + 0.5);
-                
-                // Add some noise for texture
-                const bufferSize = this.ctx.sampleRate * 0.5;
-                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-                const data = buffer.getChannelData(0);
-                for (let i = 0; i < bufferSize; i++) {
-                    data[i] = Math.random() * 2 - 1;
-                }
-                const noise = this.ctx.createBufferSource();
-                noise.buffer = buffer;
-                const noiseGain = this.ctx.createGain();
-                noiseGain.gain.value = 0.2;
-                noise.connect(noiseGain);
-                noiseGain.connect(this.ctx.destination);
-
-                gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
-                
-                osc.connect(gain);
-                gain.connect(this.ctx.destination);
-                
-                osc.start();
-                noise.start();
-                osc.stop(this.ctx.currentTime + 0.5);
             }
-        };
+        }
+    </script>
+</head>
+<body class="bg-gray-100 text-slate-900 font-sans min-h-screen flex justify-center items-start">
+    <div id="root" class="w-full"></div>
 
-        // Three.js Globals
-        let scene, camera, renderer;
-        let gun, gunBarrelGroup;
-        let clay, particles = [];
-        let birds = [];
-        let poops = [];
-        let muzzleFlashMesh;
-        let raycaster;
-        let reloadTargets = [];
-        let lastTime = 0;
-        
-        let clayVelocity = new THREE.Vector3();
-        
-        function init() {
-            scene = new THREE.Scene();
-            scene.fog = new THREE.Fog(0x87CEEB, 20, 150);
+    <script type="text/babel">
+        const { useState, useEffect } = React;
 
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-            
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.shadowMap.enabled = true;
-            
-            const container = document.getElementById('game-container');
-            if (container) {
-                container.appendChild(renderer.domElement);
-            } else {
-                document.body.appendChild(renderer.domElement);
-            }
+        // --- Icons Components ---
+        const IconBase = ({ children, className, ...props }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{children}</svg>
+        );
+        const Target = (props) => <IconBase {...props}><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></IconBase>;
+        const RotateCcw = (props) => <IconBase {...props}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 12"></path><path d="M3 3v9h9"></path></IconBase>;
+        const Crosshair = (props) => <IconBase {...props}><circle cx="12" cy="12" r="10"></circle><line x1="22" y1="12" x2="18" y2="12"></line><line x1="6" y1="12" x2="2" y2="12"></line><line x1="12" y1="6" x2="12" y2="2"></line><line x1="12" y1="22" x2="12" y2="18"></line></IconBase>;
+        const XCircle = (props) => <IconBase {...props}><circle cx="12" cy="12" r="10"></circle><path d="m15 9-6 6"></path><path d="m9 9 6 6"></path></IconBase>;
+        const CheckCircle = (props) => <IconBase {...props}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></IconBase>;
+        const BarChart2 = (props) => <IconBase {...props}><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></IconBase>;
+        const History = (props) => <IconBase {...props}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 12"></path><path d="M3 3v9h9"></path><path d="M12 7v5l4 2"></path></IconBase>;
+        const Save = (props) => <IconBase {...props}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></IconBase>;
+        const Trash2 = (props) => <IconBase {...props}><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></IconBase>;
+        const Calendar = (props) => <IconBase {...props}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></IconBase>;
 
-            // --- SKY SPHERE ---
-            const vertexShader = `
-                varying vec3 vWorldPosition;
-                void main() {
-                    vec4 worldPosition = modelMatrix * vec4( position, 1.0 );
-                    vWorldPosition = worldPosition.xyz;
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
-                }
-            `;
-            const fragmentShader = `
-                uniform vec3 topColor;
-                uniform vec3 bottomColor;
-                uniform float offset;
-                uniform float exponent;
-                varying vec3 vWorldPosition;
-                void main() {
-                    float h = normalize( vWorldPosition + offset ).y;
-                    gl_FragColor = vec4( mix( bottomColor, topColor, max( pow( max( h , 0.0), exponent ), 0.0 ) ), 1.0 );
-                }
-            `;
-            const uniforms = {
-                topColor: { value: new THREE.Color( 0x0077ff ) },
-                bottomColor: { value: new THREE.Color( 0xffffff ) },
-                offset: { value: 33 },
-                exponent: { value: 0.6 }
+        // --- Data ---
+        const TARGET_TYPES = [
+            { id: 'clay', name: 'Clay Target', icon: '🟠' },
+            { id: 'eagle', name: 'Eagle', icon: '🦅' },
+            { id: 'duck', name: 'Duck', icon: '🦆' },
+            { id: 'rabbit', name: 'Rabbit', icon: '🐇' },
+            { id: 'mouse', name: 'Mouse', icon: '🐁' },
+            // Fox Removed
+        ];
+
+        function App() {
+            const [sessionData, setSessionData] = useState(() => {
+                const saved = localStorage.getItem('shooting_current_session');
+                // Filter out any old data for removed targets (like fox) if loading from cache
+                const initial = saved ? JSON.parse(saved) : {};
+                
+                // Ensure all current targets exist in state
+                const cleanState = {};
+                TARGET_TYPES.forEach(t => {
+                    cleanState[t.id] = initial[t.id] || { hits: 0, misses: 0 };
+                });
+                return cleanState;
+            });
+
+            const [history, setHistory] = useState(() => {
+                const saved = localStorage.getItem('shooting_history');
+                return saved ? JSON.parse(saved) : [];
+            });
+
+            const [view, setView] = useState('tracker');
+
+            useEffect(() => {
+                localStorage.setItem('shooting_current_session', JSON.stringify(sessionData));
+            }, [sessionData]);
+
+            useEffect(() => {
+                localStorage.setItem('shooting_history', JSON.stringify(history));
+            }, [history]);
+
+            const vibrate = (ms = 10) => { if (navigator.vibrate) navigator.vibrate(ms); };
+
+            const handleHit = (id) => {
+                vibrate(10);
+                setSessionData(prev => ({ ...prev, [id]: { ...prev[id], hits: prev[id].hits + 1 } }));
             };
-            const skyGeo = new THREE.SphereGeometry( 500, 32, 15 );
-            const skyMat = new THREE.ShaderMaterial( { vertexShader: vertexShader, fragmentShader: fragmentShader, uniforms: uniforms, side: THREE.BackSide } );
-            const sky = new THREE.Mesh( skyGeo, skyMat );
-            scene.add( sky );
 
-            // --- GRASS ---
-            const grassCanvas = document.createElement('canvas');
-            grassCanvas.width = 512;
-            grassCanvas.height = 512;
-            const ctx = grassCanvas.getContext('2d');
-            ctx.fillStyle = '#228B22'; // Base Green
-            ctx.fillRect(0,0,512,512);
-            // Add noise
-            for(let i=0; i<50000; i++) {
-                ctx.fillStyle = Math.random() > 0.5 ? '#1a6b1a' : '#2e8b57';
-                ctx.fillRect(Math.random()*512, Math.random()*512, 2, 2);
-            }
-            const grassTexture = new THREE.CanvasTexture(grassCanvas);
-            grassTexture.wrapS = THREE.RepeatWrapping;
-            grassTexture.wrapT = THREE.RepeatWrapping;
-            grassTexture.repeat.set(50, 50);
+            const handleMiss = (id) => {
+                vibrate(30);
+                setSessionData(prev => ({ ...prev, [id]: { ...prev[id], misses: prev[id].misses + 1 } }));
+            };
 
-            const planeGeometry = new THREE.PlaneGeometry(200, 200);
-            const planeMaterial = new THREE.MeshStandardMaterial({ map: grassTexture });
-            const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-            plane.rotation.x = -Math.PI / 2;
-            plane.receiveShadow = true;
-            scene.add(plane);
+            const calculateTotals = (data = sessionData) => {
+                let totalHits = 0, totalMisses = 0;
+                Object.values(data).forEach(d => { totalHits += d.hits; totalMisses += d.misses; });
+                return { totalHits, totalMisses, totalShots: totalHits + totalMisses };
+            };
 
-            // Lighting
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-            scene.add(ambientLight);
+            const totals = calculateTotals();
 
-            const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-            dirLight.position.set(50, 100, 50);
-            dirLight.castShadow = true;
-            dirLight.shadow.camera.left = -50;
-            dirLight.shadow.camera.right = 50;
-            dirLight.shadow.camera.top = 50;
-            dirLight.shadow.camera.bottom = -50;
-            dirLight.shadow.mapSize.width = 2048;
-            dirLight.shadow.mapSize.height = 2048;
-            scene.add(dirLight);
-
-            // Buildings
-            createTrapHouses();
-
-            // Gun
-            createGun();
-
-            raycaster = new THREE.Raycaster();
-
-            // Listeners
-            window.addEventListener('resize', onWindowResize, false);
-            document.addEventListener('click', onClick, false);
-            document.addEventListener('keydown', onKeyDown, false);
-            
-            // Start
-            const startBtn = document.getElementById('start-btn');
-            startBtn.addEventListener('click', () => {
-                document.body.requestPointerLock();
-                document.getElementById('start-screen').style.display = 'none';
-                document.getElementById('session-panel').style.display = 'block';
-                AudioSys.init();
-                startBirdSpawner();
-            });
-
-            document.getElementById('save-btn').addEventListener('click', () => {
-                if (state.hits + state.misses > 0) {
-                    window.saveSessionReport(state.hits, state.misses);
-                    state.hits = 0; state.misses = 0;
-                    updateHUD();
-                    showMessage("SESSION SAVED", 2000);
-                } else {
-                    showMessage("NO DATA TO SAVE", 2000);
+            const resetSession = () => {
+                vibrate(20);
+                if (window.confirm("Clear current session?")) {
+                    setSessionData(TARGET_TYPES.reduce((acc, t) => ({...acc, [t.id]: { hits: 0, misses: 0 }}), {}));
+                    setView('tracker');
                 }
-            });
+            };
 
-            animate();
-        }
+            const saveAndEndSession = () => {
+                vibrate(20);
+                if (totals.totalShots === 0) { alert("No shots to save."); return; }
+                const newRecord = { id: Date.now(), date: new Date().toISOString(), data: sessionData, totals: totals };
+                setHistory(prev => [newRecord, ...prev]);
+                setSessionData(TARGET_TYPES.reduce((acc, t) => ({...acc, [t.id]: { hits: 0, misses: 0 }}), {}));
+                setView('history');
+            };
 
-        function createRTexture() {
-            const canvas = document.createElement('canvas');
-            canvas.width = 256;
-            canvas.height = 256;
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#654321'; // Darker wood brown for contrast
-            ctx.fillRect(0,0,256,256);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.font = 'bold 200px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('R', 128, 128);
-            
-            // Add border
-            ctx.strokeStyle = '#FFFFFF';
-            ctx.lineWidth = 10;
-            ctx.strokeRect(5,5,246,246);
-            
-            return new THREE.CanvasTexture(canvas);
-        }
+            const clearHistory = () => {
+                if (window.confirm("Delete all history?")) setHistory([]);
+            };
 
-        function createTrapHouses() {
-            const trapGeo = new THREE.BoxGeometry(4, 3, 4);
-            const trapMat = new THREE.MeshStandardMaterial({ color: 0x8B4513 }); // SaddleBrown for wood
-            const trap = new THREE.Mesh(trapGeo, trapMat);
-            trap.position.set(-15, 1.5, -20);
-            trap.castShadow = true;
-            scene.add(trap);
+            // --- Views ---
 
-            const highTrapGeo = new THREE.BoxGeometry(4, 8, 4);
-            const highTrap = new THREE.Mesh(highTrapGeo, trapMat);
-            highTrap.position.set(15, 4, -20);
-            highTrap.castShadow = true;
-            scene.add(highTrap);
-
-            // Create R signs
-            const rTex = createRTexture();
-            const rMat = new THREE.MeshBasicMaterial({ map: rTex });
-            const rGeo = new THREE.PlaneGeometry(2, 2);
-
-            // Low House Sign
-            const r1 = new THREE.Mesh(rGeo, rMat);
-            r1.position.set(-15, 1.5, -17.9); // Slightly in front of z=-18 face (which faces shooter approx)
-            scene.add(r1);
-            reloadTargets.push(r1);
-
-            // High House Sign
-            const r2 = new THREE.Mesh(rGeo, rMat);
-            r2.position.set(15, 4, -17.9);
-            scene.add(r2);
-            reloadTargets.push(r2);
-        }
-
-        function createGun() {
-            gun = new THREE.Group();
-
-            const blackMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 });
-            const metalMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.8, roughness: 0.2 });
-
-            // Stock
-            const stock = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.2, 0.6), blackMat);
-            stock.position.set(0, -0.2, 0.4);
-            gun.add(stock);
-
-            // Receiver
-            const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.22, 0.4), blackMat);
-            receiver.position.set(0, -0.15, 0);
-            gun.add(receiver);
-            
-            // Sights (Rear) attached to receiver
-            const sight = new THREE.Mesh(new THREE.TorusGeometry(0.02, 0.005, 8, 16), blackMat);
-            sight.position.set(0, -0.05, 0.1);
-            gun.add(sight);
-
-            // --- Barrel Assembly Group (For Breaking Animation) ---
-            gunBarrelGroup = new THREE.Group();
-            // Pivot point at the front of the receiver
-            gunBarrelGroup.position.set(0, -0.15, -0.2); 
-            gun.add(gunBarrelGroup);
-
-            // Barrel (Position relative to gunBarrelGroup origin)
-            const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.2, 16), metalMat);
-            barrel.rotation.x = -Math.PI / 2;
-            // Original: (0, -0.1, -0.6). Diff from pivot(0, -0.15, -0.2) is (0, +0.05, -0.4)
-            barrel.position.set(0, 0.05, -0.4); 
-            gunBarrelGroup.add(barrel);
-
-            // Mag Tube
-            const mag = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.0, 16), blackMat);
-            mag.rotation.x = -Math.PI / 2;
-            // Original: (0, -0.18, -0.5). Diff from pivot is (0, -0.03, -0.3)
-            mag.position.set(0, -0.03, -0.3);
-            gunBarrelGroup.add(mag);
-
-            // Front Sight
-            const frontSight = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.04, 0.01), blackMat);
-            // Original: (0, -0.06, -1.15). Diff from pivot is (0, +0.09, -0.95)
-            frontSight.position.set(0, 0.09, -0.95);
-            gunBarrelGroup.add(frontSight);
-
-            // Muzzle Flash Geometry
-            const flashGeo = new THREE.ConeGeometry(0.1, 0.5, 8, 1, true);
-            flashGeo.rotateX(Math.PI / 2);
-            const flashMat = new THREE.MeshBasicMaterial({ 
-                color: 0xFFaa00, 
-                transparent: true, 
-                opacity: 0.8, 
-                blending: THREE.AdditiveBlending 
-            });
-            muzzleFlashMesh = new THREE.Mesh(flashGeo, flashMat);
-            // Original: (0, -0.1, -1.45). Diff from pivot is (0, +0.05, -1.25)
-            muzzleFlashMesh.position.set(0, 0.05, -1.25); 
-            muzzleFlashMesh.visible = false;
-            gunBarrelGroup.add(muzzleFlashMesh);
-
-            scene.add(gun);
-            camera.add(gun);
-            gun.position.set(0.2, -0.3, -0.5);
-            scene.add(camera);
-            camera.position.set(0, 1.7, 0);
-        }
-
-        // --- BIRD SYSTEM ---
-        function createBird() {
-            const birdGroup = new THREE.Group();
-            // Body
-            const body = new THREE.Mesh(
-                new THREE.ConeGeometry(0.2, 0.6, 8),
-                new THREE.MeshStandardMaterial({ color: 0x4a3728 }) // Duck brown
+            const TrackerView = () => (
+                <div className="space-y-4 animate-in fade-in duration-300">
+                    {TARGET_TYPES.map((target) => {
+                        const stats = sessionData[target.id];
+                        return (
+                            <div key={target.id} className="bg-white rounded-2xl shadow-sm border border-slate-100/60 overflow-hidden">
+                                <div className="px-4 py-3 flex items-center justify-between bg-slate-50/80 border-b border-slate-100">
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-2xl drop-shadow-sm filter grayscale-[0.2]">{target.icon}</span>
+                                        <h3 className="font-bold text-slate-800 text-lg tracking-tight">{target.name}</h3>
+                                    </div>
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 bg-slate-200/50 px-2 py-1 rounded-md">
+                                        Total: {stats.hits + stats.misses}
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 divide-x divide-slate-100">
+                                    <button onClick={() => handleHit(target.id)} className="relative h-28 flex flex-col items-center justify-center bg-gradient-to-br from-emerald-50 to-white active:from-emerald-200 active:to-emerald-100 text-emerald-700 transition-all touch-manipulation group overflow-hidden">
+                                        <CheckCircle className="w-8 h-8 mb-1 transition-transform group-active:scale-90" strokeWidth={2.5} />
+                                        <span className="text-xs font-black uppercase tracking-widest opacity-70">HIT</span>
+                                        <span className="text-2xl font-black mt-1 tabular-nums">{stats.hits}</span>
+                                    </button>
+                                    <button onClick={() => handleMiss(target.id)} className="relative h-28 flex flex-col items-center justify-center bg-gradient-to-br from-rose-50 to-white active:from-rose-200 active:to-rose-100 text-rose-700 transition-all touch-manipulation group overflow-hidden">
+                                        <XCircle className="w-8 h-8 mb-1 transition-transform group-active:scale-90" strokeWidth={2.5} />
+                                        <span className="text-xs font-black uppercase tracking-widest opacity-70">MISS</span>
+                                        <span className="text-2xl font-black mt-1 tabular-nums">{stats.misses}</span>
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
             );
-            body.rotation.x = Math.PI / 2;
-            birdGroup.add(body);
-            // Wings
-            const wingGeo = new THREE.BoxGeometry(0.6, 0.05, 0.3);
-            const wingMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
-            const lWing = new THREE.Mesh(wingGeo, wingMat);
-            lWing.position.set(0.4, 0, 0);
-            birdGroup.add(lWing);
-            const rWing = new THREE.Mesh(wingGeo, wingMat);
-            rWing.position.set(-0.4, 0, 0);
-            birdGroup.add(rWing);
 
-            birdGroup.userData = { 
-                velocity: new THREE.Vector3(), 
-                wings: [lWing, rWing],
-                wingSpeed: 0.2 + Math.random() * 0.1,
-                flapOffset: Math.random() * 10
-            };
-            return birdGroup;
-        }
+            const ReportView = () => (
+                <div className="space-y-6 pb-6 animate-in fade-in duration-300">
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+                        <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                            <BarChart2 className="w-5 h-5 text-indigo-600" />
+                            Session Summary
+                        </h2>
+                        <div className="flex gap-3 mb-6">
+                            <div className="flex-1 bg-emerald-50/80 rounded-2xl p-3 text-center border border-emerald-100/50 shadow-sm">
+                                <div className="text-emerald-600 text-[10px] font-black uppercase tracking-widest mb-1">Hits</div>
+                                <div className="text-3xl font-black text-emerald-700 tabular-nums">{totals.totalHits}</div>
+                            </div>
+                            <div className="flex-1 bg-rose-50/80 rounded-2xl p-3 text-center border border-rose-100/50 shadow-sm">
+                                <div className="text-rose-600 text-[10px] font-black uppercase tracking-widest mb-1">Misses</div>
+                                <div className="text-3xl font-black text-rose-700 tabular-nums">{totals.totalMisses}</div>
+                            </div>
+                            <div className="flex-1 bg-slate-50 rounded-2xl p-3 text-center border border-slate-100 shadow-sm">
+                                <div className="text-slate-500 text-[10px] font-black uppercase tracking-widest mb-1">Total</div>
+                                <div className="text-3xl font-black text-slate-700 tabular-nums">{totals.totalShots}</div>
+                            </div>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                            <div className="flex justify-between items-end mb-2">
+                                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Accuracy</span>
+                                <span className="text-2xl font-black text-indigo-600 tabular-nums">
+                                    {totals.totalShots > 0 ? Math.round((totals.totalHits / totals.totalShots) * 100) : 0}%
+                                </span>
+                            </div>
+                            <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                                <div className="bg-indigo-600 h-2.5 rounded-full transition-all duration-500" style={{ width: `${totals.totalShots > 0 ? (totals.totalHits / totals.totalShots) * 100 : 0}%` }}></div>
+                            </div>
+                        </div>
+                    </div>
 
-        function startBirdSpawner() {
-            setInterval(() => {
-                if (birds.length < 5 && Math.random() > 0.6) {
-                    spawnBird();
-                }
-            }, 3000);
-        }
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                        <div className="bg-slate-50/80 px-5 py-3 border-b border-slate-100 font-bold text-slate-500 text-[10px] uppercase tracking-wider backdrop-blur-sm">
+                            Detailed Breakdown
+                        </div>
+                        <div className="divide-y divide-slate-100">
+                            {TARGET_TYPES.map(target => {
+                                const stats = sessionData[target.id];
+                                // Handle case where target might have been removed but data exists (though resetSession cleans this up usually)
+                                if (!stats) return null;
+                                
+                                const total = stats.hits + stats.misses;
+                                const accuracy = total > 0 ? Math.round((stats.hits / total) * 100) : 0;
+                                if (total === 0) return null;
+                                return (
+                                    <div key={target.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                                        <div className="flex items-center gap-3">
+                                            <span className="text-xl filter grayscale-[0.2]">{target.icon}</span>
+                                            <div>
+                                                <div className="font-bold text-slate-800 text-sm">{target.name}</div>
+                                                <div className="text-[10px] text-slate-400 mt-0.5 font-medium uppercase tracking-wide">
+                                                    <span className="text-emerald-600">{stats.hits} hit</span> <span className="text-slate-300">/</span> <span className="text-rose-500">{stats.misses} miss</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className={`text-xs font-bold px-2.5 py-1 rounded-full ${accuracy >= 80 ? 'bg-emerald-100 text-emerald-800' : accuracy >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-rose-100 text-rose-800'}`}>
+                                                {accuracy}%
+                                            </div>
+                                            <div className="text-[10px] text-slate-400 mt-1 font-medium">{total} shots</div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                            {totals.totalShots === 0 && <div className="p-8 text-center text-slate-400 text-sm">No shots recorded yet.</div>}
+                        </div>
+                    </div>
 
-        function spawnBird() {
-            const bird = createBird();
-            const fromLeft = Math.random() > 0.5;
-            const h = 10 + Math.random() * 15; // Altitude
-            const d = -30 - Math.random() * 20; // Depth
-            
-            if (fromLeft) {
-                bird.position.set(-50, h, d);
-                bird.userData.velocity.set(5 + Math.random() * 5, 0, 0);
-                bird.rotation.y = Math.PI / 2;
-            } else {
-                bird.position.set(50, h, d);
-                bird.userData.velocity.set(-(5 + Math.random() * 5), 0, 0);
-                bird.rotation.y = -Math.PI / 2;
-            }
-            scene.add(bird);
-            birds.push(bird);
-        }
+                    <button onClick={saveAndEndSession} className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-200">
+                        <Save className="w-5 h-5" /> Finish & Save
+                    </button>
+                </div>
+            );
 
-        function spawnPoop(position) {
-            const poopGeo = new THREE.SphereGeometry(0.08, 8, 8);
-            const poopMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF }); // White poop
-            const poop = new THREE.Mesh(poopGeo, poopMat);
-            poop.position.copy(position);
-            scene.add(poop);
-            poops.push({ mesh: poop, velocity: new THREE.Vector3(0, -2, 0) });
-        }
+            const HistoryView = () => {
+                const allTimeStats = history.reduce((acc, session) => {
+                    acc.hits += session.totals.totalHits;
+                    acc.misses += session.totals.totalMisses;
+                    acc.shots += session.totals.totalShots;
+                    return acc;
+                }, { hits: 0, misses: 0, shots: 0 });
 
-        // --- GAMEPLAY ---
-
-        function spawnClay() {
-            if (state.clayActive) return;
-            const geometry = new THREE.CylinderGeometry(0.3, 0.3, 0.05, 32);
-            const material = new THREE.MeshStandardMaterial({ color: 0xFF4500 });
-            clay = new THREE.Mesh(geometry, material);
-            
-            const fromLeft = Math.random() > 0.5;
-            if (fromLeft) {
-                clay.position.set(-15, 1.5, -20);
-                clayVelocity.set(15 + Math.random() * 5, 10 + Math.random() * 5, -5 + Math.random() * 2);
-            } else {
-                clay.position.set(15, 4, -20);
-                clayVelocity.set(-15 - Math.random() * 5, 5 + Math.random() * 5, -5 + Math.random() * 2);
-            }
-            clay.castShadow = true;
-            clay.rotation.x = Math.PI / 2;
-            scene.add(clay);
-            state.clayActive = true;
-            state.ammo = 2;
-            showMessage("");
-            updateHUD();
-            AudioSys.playPull();
-        }
-
-        function breakClay() {
-            if (!clay) return;
-            const particleGeo = new THREE.TetrahedronGeometry(0.05);
-            const particleMat = new THREE.MeshBasicMaterial({ color: 0xFF4500 });
-            for(let i=0; i<15; i++) {
-                const mesh = new THREE.Mesh(particleGeo, particleMat);
-                mesh.position.copy(clay.position);
-                mesh.userData.velocity = new THREE.Vector3(
-                    (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10
+                return (
+                    <div className="space-y-6 pb-6 animate-in fade-in duration-300">
+                        {history.length > 0 && (
+                            <div className="bg-slate-900 text-white rounded-2xl shadow-xl p-5 border border-slate-700">
+                                <div className="flex justify-between items-start mb-4">
+                                    <h3 className="font-bold text-sm flex items-center gap-2 text-slate-200 uppercase tracking-wide">
+                                        <Calendar className="w-4 h-4 text-indigo-400" /> Lifetime Stats
+                                    </h3>
+                                    <button onClick={clearHistory} className="text-white/40 hover:text-rose-400 p-1 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                                </div>
+                                <div className="grid grid-cols-3 gap-3 text-center">
+                                    <div className="bg-white/5 rounded-xl p-2.5 backdrop-blur-sm">
+                                        <div className="text-slate-400 text-[10px] uppercase tracking-wider font-bold mb-1">Shots</div>
+                                        <div className="text-xl font-bold">{allTimeStats.shots}</div>
+                                    </div>
+                                    <div className="bg-emerald-500/10 rounded-xl p-2.5 border border-emerald-500/20 backdrop-blur-sm">
+                                        <div className="text-emerald-400 text-[10px] uppercase tracking-wider font-bold mb-1">Hits</div>
+                                        <div className="text-xl font-bold text-emerald-100">{allTimeStats.hits}</div>
+                                    </div>
+                                    <div className="bg-white/5 rounded-xl p-2.5 backdrop-blur-sm">
+                                        <div className="text-slate-400 text-[10px] uppercase tracking-wider font-bold mb-1">Acc</div>
+                                        <div className="text-xl font-bold text-indigo-300">{allTimeStats.shots > 0 ? Math.round((allTimeStats.hits / allTimeStats.shots) * 100) : 0}%</div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        {history.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-24 text-slate-400">
+                                <div className="bg-white p-6 rounded-full mb-4 shadow-sm"><History className="w-10 h-10 text-slate-300" /></div>
+                                <p className="font-medium">No history yet</p>
+                                <p className="text-xs mt-1 opacity-70">Complete a session to see it here</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                <div className="px-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Recent Sessions</div>
+                                {history.map((session) => {
+                                    const accuracy = session.totals.totalShots > 0 ? Math.round((session.totals.totalHits / session.totals.totalShots) * 100) : 0;
+                                    return (
+                                        <div key={session.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 transition-transform active:scale-[0.99]">
+                                            <div className="flex justify-between items-center mb-3 pb-3 border-b border-slate-50">
+                                                <div>
+                                                    <div className="font-bold text-slate-800 text-sm">{new Date(session.date).toLocaleDateString('en-US', {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'})}</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mt-0.5">{session.totals.totalShots} shots</div>
+                                                </div>
+                                                <div className={`px-2.5 py-1 rounded-full text-xs font-black ${accuracy >= 80 ? 'bg-emerald-100 text-emerald-800' : accuracy >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-rose-100 text-rose-800'}`}>{accuracy}%</div>
+                                            </div>
+                                            <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar mask-gradient-r">
+                                                {TARGET_TYPES.map(type => {
+                                                    const tStat = session.data[type.id];
+                                                    if (!tStat || (tStat.hits === 0 && tStat.misses === 0)) return null;
+                                                    return (
+                                                        <div key={type.id} className="flex-shrink-0 bg-slate-50/80 rounded-lg px-2 py-1.5 text-[10px] border border-slate-100 flex flex-col items-center min-w-[44px]">
+                                                            <span className="text-sm mb-1">{type.icon}</span>
+                                                            <span className="font-bold text-emerald-600">{tStat.hits}</span>
+                                                        </div>
+                                                    )
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
                 );
-                scene.add(mesh);
-                particles.push(mesh);
-            }
-            scene.remove(clay);
-            clay = null;
-            state.clayActive = false;
-            state.hits++;
-            updateHUD();
-            showMessage("HIT!", 1000);
-            AudioSys.playHit();
+            };
+
+            return (
+                <div className="w-full max-w-[480px] bg-slate-50 min-h-screen relative shadow-2xl flex flex-col mx-auto overflow-hidden ring-1 ring-slate-900/5">
+                    {/* Header */}
+                    <header className="sticky top-0 z-50 bg-slate-900/95 backdrop-blur-md text-white pt-safe">
+                        <div className="px-5 py-3 flex items-center justify-between h-16">
+                            <div className="flex items-center gap-2">
+                                <div className="bg-red-500 p-1.5 rounded-lg"><Target className="w-4 h-4 text-white" strokeWidth={3} /></div>
+                                <h1 className="text-lg font-bold tracking-tight">Range<span className="text-red-500">Tracker</span></h1>
+                            </div>
+                            {view === 'tracker' && totals.totalShots > 0 && (
+                                <div className="flex items-center gap-3 animate-in fade-in slide-in-from-right-4 duration-300">
+                                    <div className="text-xs font-medium text-slate-400 text-right leading-tight">
+                                        <span className="text-white font-bold block text-sm">{totals.totalShots}</span> shots
+                                    </div>
+                                    <button onClick={resetSession} className="bg-white/10 p-2 rounded-full text-white/70 hover:text-white hover:bg-red-500/80 transition-all active:scale-90">
+                                        <RotateCcw className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </header>
+
+                    {/* Top Nav (Moved from bottom) */}
+                    <nav className="sticky top-16 z-40 bg-white/95 backdrop-blur-lg border-b border-slate-200 shadow-sm">
+                        <div className="flex justify-around items-center h-14">
+                            {[
+                                { id: 'tracker', icon: Crosshair, label: 'Track' },
+                                { id: 'report', icon: BarChart2, label: 'Report' },
+                                { id: 'history', icon: History, label: 'History' }
+                            ].map((item) => (
+                                <button 
+                                    key={item.id}
+                                    onClick={() => setView(item.id)}
+                                    className={`flex-1 flex items-center justify-center h-full gap-2 transition-all active:bg-slate-50 ${
+                                        view === item.id ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:text-slate-600 border-b-2 border-transparent'
+                                    }`}
+                                >
+                                    <item.icon className={`w-5 h-5 ${view === item.id ? 'stroke-[2.5px]' : 'stroke-2'}`} />
+                                    <span className="text-xs font-bold uppercase tracking-wide">{item.label}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </nav>
+
+                    {/* Main Content */}
+                    <main className="flex-1 w-full px-4 py-6 overflow-y-auto no-scrollbar">
+                        {view === 'tracker' && <TrackerView />}
+                        {view === 'report' && <ReportView />}
+                        {view === 'history' && <HistoryView />}
+                    </main>
+                </div>
+            );
         }
 
-        function missClay() {
-            if (!clay) return;
-            scene.remove(clay);
-            clay = null;
-            state.clayActive = false;
-            state.misses++;
-            updateHUD();
-            showMessage("MISS", 1000);
-        }
-
-        function shoot() {
-            if (state.ammo <= 0) {
-                showMessage("RELOAD! [R]", 500);
-                return;
-            }
-            if (state.isReloading) return;
-
-            // 1. Recoil Animation
-            const originalPos = gun.position.clone();
-            // Increased kickback (Z) from 0.2 to 0.4 and added slight muzzle rise (Y)
-            const recoilPos = originalPos.clone().add(new THREE.Vector3(0, 0.05, 0.4));
-            let t = 0;
-            const recoilAnim = setInterval(() => {
-                t += 0.2;
-                if(t < 1) gun.position.lerp(recoilPos, 0.5);
-                else if (t < 2) gun.position.lerp(originalPos, 0.2);
-                else {
-                    gun.position.copy(originalPos);
-                    clearInterval(recoilAnim);
-                }
-            }, 16);
-
-            // 2. Muzzle Flash (Flame)
-            muzzleFlashMesh.visible = true;
-            muzzleFlashMesh.rotation.z = Math.random() * Math.PI; // Rotate flame randomly
-            muzzleFlashMesh.scale.set(1 + Math.random()*0.5, 1 + Math.random(), 1 + Math.random()*0.5);
-            setTimeout(() => muzzleFlashMesh.visible = false, 50);
-
-            state.ammo--;
-            AudioSys.playShot();
-            updateHUD();
-
-            // 3. Birdshot Logic (Multiple Pellets)
-            let clayHit = false;
-
-            // Get camera direction (center aim)
-            const aimDir = new THREE.Vector3();
-            camera.getWorldDirection(aimDir);
-
-            for (let i = 0; i < CONFIG.shotCount; i++) {
-                // Perturb direction for spread
-                const spreadDir = aimDir.clone();
-                spreadDir.x += (Math.random() - 0.5) * CONFIG.spread;
-                spreadDir.y += (Math.random() - 0.5) * CONFIG.spread;
-                spreadDir.z += (Math.random() - 0.5) * CONFIG.spread;
-                spreadDir.normalize();
-
-                raycaster.set(camera.position, spreadDir);
-
-                // Check Clay
-                if (state.clayActive && clay && !clayHit) {
-                    const hitSphere = new THREE.Sphere(clay.position, 0.8);
-                    const ray = raycaster.ray;
-                    const vecToCenter = new THREE.Vector3().subVectors(hitSphere.center, ray.origin);
-                    const tClosest = vecToCenter.dot(ray.direction);
-                    
-                    if (tClosest > 0) {
-                        const closestPoint = new THREE.Vector3().copy(ray.direction).multiplyScalar(tClosest).add(ray.origin);
-                        if (closestPoint.distanceTo(hitSphere.center) < hitSphere.radius) {
-                            breakClay();
-                            clayHit = true; // Only break once
-                        }
-                    }
-                }
-
-                // Check Birds
-                const birdIntersects = raycaster.intersectObjects(birds, true); // true for recursive
-                if (birdIntersects.length > 0) {
-                    // Hit a bird!
-                    const hitObj = birdIntersects[0].object;
-                    // Find the parent group to manipulate
-                    let parentGroup = hitObj;
-                    while(parentGroup.parent && parentGroup.parent.type !== 'Scene') {
-                        parentGroup = parentGroup.parent;
-                    }
-
-                    // Effects
-                    AudioSys.playQuack();
-                    AudioSys.playFart(); // <-- FART!
-                    spawnPoop(parentGroup.position); // <-- POOP!
-                    
-                    // Make bird freak out (speed up and fly up)
-                    parentGroup.userData.velocity.y += 5;
-                    parentGroup.userData.velocity.x *= 1.5;
-                }
-            }
-        }
-
-        function reload() {
-            if (state.ammo === 2 || state.isReloading) return;
-            state.isReloading = true;
-            document.getElementById('status-text').innerText = "RELOADING...";
-            document.getElementById('status-text').classList.add('reload-anim');
-            
-            // Break Action Animation
-            const duration = 1000;
-            const startRot = 0;
-            // Changed from positive to negative to break DOWN instead of UP
-            const endRot = -Math.PI / 4; // 45 degrees down (Negative rotation tips front down)
-            let startTime = null;
-
-            function animateReload(time) {
-                if (!startTime) startTime = time;
-                const progress = (time - startTime) / duration;
-                
-                if (progress < 0.3) {
-                    // Break open
-                    const p = progress / 0.3;
-                    gunBarrelGroup.rotation.x = p * endRot;
-                } else if (progress < 0.7) {
-                    // Stay open
-                    gunBarrelGroup.rotation.x = endRot;
-                } else if (progress < 1.0) {
-                    // Close
-                    const p = (progress - 0.7) / 0.3;
-                    gunBarrelGroup.rotation.x = endRot * (1 - p);
-                } else {
-                    gunBarrelGroup.rotation.x = 0;
-                    return; // Stop animation loop, reloading finishes via setTimeout below
-                }
-                requestAnimationFrame(animateReload);
-            }
-            requestAnimationFrame(animateReload);
-            
-            AudioSys.playReload();
-
-            setTimeout(() => {
-                state.ammo = 2;
-                state.isReloading = false;
-                document.getElementById('status-text').innerText = "READY";
-                document.getElementById('status-text').classList.remove('reload-anim');
-                updateHUD();
-            }, 1000);
-        }
-
-        // --- LOOP ---
-        function onKeyDown(event) {
-            if (event.code === 'Space') {
-                if (!state.clayActive) spawnClay();
-            }
-            if (event.code === 'KeyR') reload();
-        }
-
-        function onClick() {
-            if (document.pointerLockElement === document.body) {
-                // Check if aiming at an "R" sign for reload
-                raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-                const intersects = raycaster.intersectObjects(reloadTargets);
-                if (intersects.length > 0) {
-                    reload();
-                } else {
-                    // Normal shooting
-                    shoot();
-                }
-            }
-        }
-
-        function onMouseMove( event ) {
-            if (document.pointerLockElement === document.body) {
-                camera.rotation.y -= event.movementX * 0.002;
-                camera.rotation.x -= event.movementY * 0.002;
-                camera.rotation.x = Math.max( - Math.PI / 2, Math.min( Math.PI / 2, camera.rotation.x ) );
-            }
-        }
-        document.addEventListener( 'mousemove', onMouseMove, false );
-
-        function updateHUD() {
-            document.getElementById('score').innerText = `HITS: ${state.hits} | MISS: ${state.misses}`;
-            const s1 = document.getElementById('s1');
-            const s2 = document.getElementById('s2');
-            s1.className = state.ammo >= 1 ? 'shell' : 'shell spent';
-            s2.className = state.ammo >= 2 ? 'shell' : 'shell spent';
-        }
-
-        function showMessage(text, duration) {
-            const el = document.getElementById('message-center');
-            el.innerText = text;
-            el.style.opacity = 1;
-            if (duration) setTimeout(() => el.style.opacity = 0, duration);
-        }
-
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        function animate(time) {
-            requestAnimationFrame(animate);
-            const delta = (time - lastTime) / 1000;
-            lastTime = time;
-
-            // Update Clay
-            if (state.clayActive && clay) {
-                clayVelocity.y += CONFIG.gravity * delta;
-                clay.position.add(clayVelocity.clone().multiplyScalar(delta));
-                clay.rotation.z += 10 * delta;
-                if (clay.position.y < 0) missClay();
-            }
-
-            // Update Birds
-            for (let i = birds.length - 1; i >= 0; i--) {
-                const b = birds[i];
-                b.position.add(b.userData.velocity.clone().multiplyScalar(delta));
-                // Flap wings
-                const flapSpeed = b.userData.wingSpeed;
-                const angle = Math.sin(time * 0.01 + b.userData.flapOffset) * 0.5;
-                b.userData.wings[0].rotation.z = angle;
-                b.userData.wings[1].rotation.z = -angle;
-
-                // Remove if far away
-                if (Math.abs(b.position.x) > 100) {
-                    scene.remove(b);
-                    birds.splice(i, 1);
-                }
-            }
-
-            // Update Poops
-            for (let i = poops.length - 1; i >= 0; i--) {
-                const p = poops[i];
-                p.velocity.y += CONFIG.gravity * delta;
-                p.mesh.position.add(p.velocity.clone().multiplyScalar(delta));
-                if (p.mesh.position.y < 0) {
-                    scene.remove(p.mesh);
-                    poops.splice(i, 1);
-                }
-            }
-
-            // Update Particles
-            for (let i = particles.length - 1; i >= 0; i--) {
-                const p = particles[i];
-                p.userData.velocity.y += CONFIG.gravity * delta;
-                p.position.add(p.userData.velocity.clone().multiplyScalar(delta));
-                p.rotation.x += delta;
-                if (p.position.y < 0) {
-                    scene.remove(p);
-                    particles.splice(i, 1);
-                }
-            }
-            renderer.render(scene, camera);
-        }
-
-        init();
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
     </script>
 </body>
 </html>
