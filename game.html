@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>3D Skeet Shooter - Benelli M4 Edition</title>
+    <title>3D Skeet Shooter</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     
@@ -112,10 +112,9 @@
             z-index: 0;
         }
         #crosshair {
-            position: absolute; top: 50%; left: 50%; width: 4px; height: 4px;
-            background-color: red; border-radius: 50%;
+            position: absolute; top: 50%; left: 50%; 
+            width: 120px; height: 120px;
             transform: translate(-50%, -50%); pointer-events: none; z-index: 10;
-            box-shadow: 0 0 4px white;
         }
         #hud {
             position: absolute; bottom: 20px; left: 20px;
@@ -210,7 +209,22 @@
 <body>
 
     <div id="game-container"></div>
-    <div id="crosshair"></div>
+    <div id="crosshair">
+        <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- Outer Target Ring (Faint) -->
+            <circle cx="50" cy="50" r="45" stroke="#ff0000" stroke-width="1" stroke-opacity="0.4"/>
+            <!-- Inner Aiming Ring (Bold) -->
+            <circle cx="50" cy="50" r="20" stroke="#ff0000" stroke-width="2"/>
+            <!-- Center Dot -->
+            <circle cx="50" cy="50" r="2" fill="#ff0000"/>
+            <!-- Horizontal Crosshair -->
+            <line x1="5" y1="50" x2="35" y2="50" stroke="#ff0000" stroke-width="2"/>
+            <line x1="65" y1="50" x2="95" y2="50" stroke="#ff0000" stroke-width="2"/>
+            <!-- Vertical Crosshair -->
+            <line x1="50" y1="5" x2="50" y2="35" stroke="#ff0000" stroke-width="2"/>
+            <line x1="50" y1="65" x2="50" y2="95" stroke="#ff0000" stroke-width="2"/>
+        </svg>
+    </div>
     
     <div id="start-screen">
         <h1 class="text-4xl font-bold mb-2 text-yellow-500">SKEET SHOOTER 3D</h1>
@@ -396,7 +410,7 @@
         let raycaster;
         let reloadTargets = [];
         let lastTime = 0;
-        
+        // Clay Physics
         let clayVelocity = new THREE.Vector3();
         
         function init() {
@@ -404,7 +418,8 @@
             scene.fog = new THREE.Fog(0x87CEEB, 20, 150);
 
             camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-            
+            camera.rotation.order = 'YXZ'; // Fix: Set rotation order to prevent horizon roll (view tilting)
+
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.shadowMap.enabled = true;
@@ -927,8 +942,17 @@
 
         function onMouseMove( event ) {
             if (document.pointerLockElement === document.body) {
-                camera.rotation.y -= event.movementX * 0.002;
-                camera.rotation.x -= event.movementY * 0.002;
+                let moveX = event.movementX || 0;
+                let moveY = event.movementY || 0;
+
+                // Deadzone to prevent drift
+                if (Math.abs(moveX) < 1) moveX = 0;
+                if (Math.abs(moveY) < 1) moveY = 0;
+
+                camera.rotation.y -= moveX * 0.002;
+                camera.rotation.x -= moveY * 0.002;
+                
+                // Clamp vertical look
                 camera.rotation.x = Math.max( - Math.PI / 2, Math.min( Math.PI / 2, camera.rotation.x ) );
             }
         }
@@ -959,6 +983,12 @@
             requestAnimationFrame(animate);
             const delta = (time - lastTime) / 1000;
             lastTime = time;
+
+            // Enforce rotation constraints every frame to prevent drift/roll
+            if (camera) {
+                camera.rotation.z = 0;
+                camera.rotation.order = 'YXZ'; 
+            }
 
             // Update Clay
             if (state.clayActive && clay) {
