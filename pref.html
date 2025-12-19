@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Преферанс: Сочинка</title>
+    <style>
+        :root {
+            --bg-color: #2c3e50;
+            --felt-color: #27ae60;
+            --text-color: #ecf0f1;
+            --input-bg: #fff;
+            --border-color: #bdc3c7;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 { margin-bottom: 10px; font-size: 1.5rem; }
+
+        /* Setup Screen */
+        #setup-screen {
+            background: #34495e;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+        }
+
+        .input-group { margin: 10px 0; }
+        input, select, button {
+            padding: 10px;
+            border-radius: 5px;
+            border: none;
+            width: 100%;
+            box-sizing: border-box;
+            font-size: 1rem;
+        }
+        button {
+            background-color: #e67e22;
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        button:hover { background-color: #d35400; }
+
+        /* Game Screen */
+        #game-screen { display: none; width: 100%; max-width: 800px; }
+
+        /* Score Table */
+        .score-table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: var(--felt-color);
+            color: white;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .score-table th, .score-table td {
+            border: 1px solid rgba(255,255,255,0.3);
+            padding: 8px;
+            text-align: center;
+            vertical-align: top;
+            width: 25%; /* Will be adjusted by JS */
+        }
+
+        .player-header { font-weight: bold; font-size: 1.1rem; background: rgba(0,0,0,0.2); }
+        .section-title { font-size: 0.8rem; text-transform: uppercase; opacity: 0.8; }
+        
+        .val-bullet { color: #f1c40f; font-weight: bold; font-size: 1.2rem; }
+        .val-mountain { color: #e74c3c; font-weight: bold; font-size: 1.2rem; }
+        .whist-grid { display: flex; flex-direction: column; gap: 2px; font-size: 0.9rem; }
+        .whist-item { background: rgba(255,255,255,0.2); padding: 2px; border-radius: 3px; }
+
+        /* Controls */
+        .controls {
+            background: #34495e;
+            padding: 15px;
+            border-radius: 8px;
+            display: grid;
+            gap: 10px;
+        }
+
+        .control-row { display: flex; gap: 5px; flex-wrap: wrap; }
+        .control-row > * { flex: 1; min-width: 80px; }
+        
+        .btn-add { background-color: #27ae60; }
+        .btn-reset { background-color: #c0392b; margin-top: 20px; }
+        .btn-calc { background-color: #2980b9; margin-top: 20px; }
+
+        /* Results Modal */
+        #result-area {
+            margin-top: 20px;
+            background: #fff;
+            color: #333;
+            padding: 15px;
+            border-radius: 5px;
+            display: none;
+        }
+        .result-row {
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 1px solid #ddd;
+            padding: 5px 0;
+        }
+        .positive { color: green; font-weight: bold; }
+        .negative { color: red; font-weight: bold; }
+
+    </style>
+</head>
+<body>
+
+    <h1>🂡 Преферанс (Сочи)</h1>
+
+    <div id="setup-screen">
+        <h3>Новая игра</h3>
+        <div class="input-group">
+            <label>Количество игроков:</label>
+            <select id="player-count" onchange="togglePlayerInputs()">
+                <option value="3">3 Игрока</option>
+                <option value="4">4 Игрока</option>
+            </select>
+        </div>
+        <div id="names-inputs">
+            <div class="input-group"><input type="text" id="p1-name" placeholder="Игрок 1 (Запад)" value="Запад"></div>
+            <div class="input-group"><input type="text" id="p2-name" placeholder="Игрок 2 (Север)" value="Север"></div>
+            <div class="input-group"><input type="text" id="p3-name" placeholder="Игрок 3 (Восток)" value="Восток"></div>
+            <div class="input-group" id="p4-group" style="display:none;"><input type="text" id="p4-name" placeholder="Игрок 4 (Юг)" value="Юг"></div>
+        </div>
+        <button onclick="startGame()">Начать игру</button>
+        <br><br>
+        <small style="color:#bdc3c7">Если есть сохраненная игра, она загрузится автоматически.</small>
+    </div>
+
+    <div id="game-screen">
+        <table class="score-table" id="score-table">
+            </table>
+
+        <div class="controls">
+            <h3>Добавить очки</h3>
+            <div class="control-row">
+                <select id="act-who"></select>
+                <select id="act-type" onchange="toggleWhistTarget()">
+                    <option value="bullet">В пулю (+)</option>
+                    <option value="mountain">В гору (-)</option>
+                    <option value="whist">Висты</option>
+                </select>
+            </div>
+            
+            <div class="control-row">
+                <input type="number" id="act-amount" placeholder="Сколько очков?" inputmode="numeric">
+                <select id="act-target" style="display:none;"></select>
+            </div>
+
+            <button class="btn-add" onclick="addScore()">Записать</button>
+        </div>
+
+        <button class="btn-calc" onclick="calculateGame()">🏁 Подсчитать итог (Расписать)</button>
+        
+        <div id="result-area"></div>
+
+        <button class="btn-reset" onclick="resetGame()">🗑 Сбросить все данные</button>
+    </div>
+
+<script>
+    // --- Состояние игры ---
+    let gameState = {
+        players: [], // { name, bullet, mountain, whists: {} }
+        active: false,
+        count: 3
+    };
+
+    // --- Инициализация ---
+    window.onload = function() {
+        const saved = localStorage.getItem('prefSochiState');
+        if (saved) {
+            gameState = JSON.parse(saved);
+            if (gameState.active) {
+                renderGame();
+            }
+        }
+    };
+
+    function togglePlayerInputs() {
+        const count = document.getElementById('player-count').value;
+        document.getElementById('p4-group').style.display = (count == 4) ? 'block' : 'none';
+    }
+
+    function toggleWhistTarget() {
+        const type = document.getElementById('act-type').value;
+        const targetSelect = document.getElementById('act-target');
+        targetSelect.style.display = (type === 'whist') ? 'block' : 'none';
+    }
+
+    function startGame() {
+        const count = parseInt(document.getElementById('player-count').value);
+        gameState.count = count;
+        gameState.players = [];
+        gameState.active = true;
+
+        for (let i = 1; i <= count; i++) {
+            const name = document.getElementById(`p${i}-name`).value || `Игрок ${i}`;
+            // whists - объект, где ключ - индекс игрока, на которого пишем
+            gameState.players.push({
+                name: name,
+                bullet: 0,
+                mountain: 0,
+                whists: Array(count).fill(0) 
+            });
+        }
+
+        saveState();
+        renderGame();
+    }
+
+    function saveState() {
+        localStorage.setItem('prefSochiState', JSON.stringify(gameState));
+    }
+
+    function resetGame() {
+        if(confirm("Вы уверены? Все данные будут удалены.")) {
+            localStorage.removeItem('prefSochiState');
+            location.reload();
+        }
+    }
+
+    // --- Отрисовка ---
+    function renderGame() {
+        document.getElementById('setup-screen').style.display = 'none';
+        document.getElementById('game-screen').style.display = 'block';
+        
+        const table = document.getElementById('score-table');
+        table.innerHTML = '';
+        const count = gameState.players.length;
+
+        // Header Row
+        let headerHtml = '<tr>';
+        gameState.players.forEach(p => {
+            headerHtml += `<td class="player-header">${p.name}</td>`;
+        });
+        headerHtml += '</tr>';
+
+        // Bullet Row
+        let bulletHtml = '<tr>';
+        gameState.players.forEach(p => {
+            bulletHtml += `<td><div class="section-title">Пуля</div><div class="val-bullet">${p.bullet}</div></td>`;
+        });
+        bulletHtml += '</tr>';
+
+        // Mountain Row
+        let mountHtml = '<tr>';
+        gameState.players.forEach(p => {
+            mountHtml += `<td><div class="section-title">Гора</div><div class="val-mountain">${p.mountain}</div></td>`;
+        });
+        mountHtml += '</tr>';
+
+        // Whists Row
+        let whistHtml = '<tr>';
+        gameState.players.forEach((p, idx) => {
+            let wDetails = '<div class="whist-grid">';
+            p.whists.forEach((amount, targetIdx) => {
+                if (idx !== targetIdx) {
+                    const targetName = gameState.players[targetIdx].name;
+                    wDetails += `<div class="whist-item">На ${targetName}: <b>${amount}</b></div>`;
+                }
+            });
+            wDetails += '</div>';
+            whistHtml += `<td><div class="section-title">Висты</div>${wDetails}</td>`;
+        });
+        whistHtml += '</tr>';
+
+        table.innerHTML = headerHtml + bulletHtml + mountHtml + whistHtml;
+
+        updateDropdowns();
+    }
+
+    function updateDropdowns() {
+        const whoSelect = document.getElementById('act-who');
+        const targetSelect = document.getElementById('act-target');
+        
+        // Save current selection if possible
+        const currWho = whoSelect.value;
+        const currTarget = targetSelect.value;
+
+        whoSelect.innerHTML = '';
+        targetSelect.innerHTML = '';
+
+        gameState.players.forEach((p, idx) => {
+            let opt = new Option(p.name, idx);
+            whoSelect.add(opt);
+            
+            let opt2 = new Option(`На ${p.name}`, idx);
+            targetSelect.add(opt2);
+        });
+
+        if (currWho) whoSelect.value = currWho;
+        // Don't restore target strictly as it depends on logic, but default is fine
+    }
+
+    // --- Логика добавления очков ---
+    function addScore() {
+        const whoIdx = parseInt(document.getElementById('act-who').value);
+        const type = document.getElementById('act-type').value;
+        const amount = parseInt(document.getElementById('act-amount').value);
+        const targetIdx = parseInt(document.getElementById('act-target').value);
+
+        if (isNaN(amount)) {
+            alert("Введите число очков!");
+            return;
+        }
+
+        if (type === 'bullet') {
+            gameState.players[whoIdx].bullet += amount;
+        } else if (type === 'mountain') {
+            gameState.players[whoIdx].mountain += amount;
+        } else if (type === 'whist') {
+            if (whoIdx === targetIdx) {
+                alert("Нельзя писать висты на самого себя!");
+                return;
+            }
+            gameState.players[whoIdx].whists[targetIdx] += amount;
+        }
+
+        document.getElementById('act-amount').value = '';
+        saveState();
+        renderGame();
+    }
+
+    // --- Финальный расчет (Сочинка) ---
+    function calculateGame() {
+        const players = JSON.parse(JSON.stringify(gameState.players)); // Copy for calc
+        const N = players.length;
+        const results = new Array(N).fill(0);
+
+        // 1. Закрытие пули
+        // Находим максимальную пулю
+        let maxBullet = 0;
+        players.forEach(p => { if(p.bullet > maxBullet) maxBullet = p.bullet; });
+
+        // У кого меньше макс. пули - разницу добавляем в гору
+        players.forEach(p => {
+            const diff = maxBullet - p.bullet;
+            if (diff > 0) {
+                p.mountain += diff;
+                // В некоторых вариациях пуля просто приравнивается, 
+                // но математически добавить разницу в гору - то же самое.
+            }
+        });
+
+        // 2. Амнистия горы (не обязательно для математики, но привычно)
+        let minMount = players[0].mountain;
+        players.forEach(p => { if(p.mountain < minMount) minMount = p.mountain; });
+        players.forEach(p => p.mountain -= minMount);
+
+        // 3. Расчет
+        // Формула для каждой пары (A и B):
+        // Очки A = (Висты A на B - Висты B на A) + (Гора B - Гора A) * 10 / N
+        
+        for (let i = 0; i < N; i++) {
+            for (let j = 0; j < N; j++) {
+                if (i === j) continue;
+
+                // Разница вистов
+                let whistDiff = players[i].whists[j] - players[j].whists[i];
+                
+                // Разница гор (компенсация)
+                // Если у J гора больше, чем у I, то I получает очки
+                let mountDiff = (players[j].mountain - players[i].mountain);
+                let mountComp = (mountDiff * 10) / N;
+
+                results[i] += whistDiff + mountComp;
+            }
+        }
+
+        // Вывод результатов
+        const resDiv = document.getElementById('result-area');
+        resDiv.style.display = 'block';
+        let html = '<h3>Итог (Висты):</h3>';
+        
+        let checkSum = 0;
+
+        results.forEach((score, idx) => {
+            const roundedScore = Math.round(score); // Округляем до целых
+            checkSum += roundedScore;
+            const colorClass = roundedScore >= 0 ? 'positive' : 'negative';
+            const sign = roundedScore > 0 ? '+' : '';
+            html += `
+                <div class="result-row">
+                    <span>${players[idx].name}</span>
+                    <span class="${colorClass}">${sign}${roundedScore}</span>
+                </div>
+            `;
+        });
+        
+        // Проверка суммы (должна быть 0 или близка к 0 из-за округления)
+        html += `<small style="color:gray">Контрольная сумма: ${checkSum} (должен быть 0)</small>`;
+
+        resDiv.innerHTML = html;
+        resDiv.scrollIntoView({ behavior: 'smooth' });
+    }
+
+</script>
+</body>
+</html>

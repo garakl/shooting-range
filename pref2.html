@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Преферанс: Сочинка</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0fdf4; }
+        .card-shadow { box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); }
+        .input-number::-webkit-inner-spin-button, 
+        .input-number::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom, 20px); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- Constants ---
+        const GAME_TYPES = [
+            { id: 'raspas', label: 'Распасы', value: 0 }, 
+            { id: '6', label: '6 (Шестерик)', value: 2 },
+            { id: '7', label: '7 (Семерик)', value: 4 },
+            { id: '8', label: '8 (Восьмерик)', value: 6 },
+            { id: '9', label: '9 (Девятерик)', value: 8 },
+            { id: '10', label: '10 (Десятерик)', value: 10 },
+            { id: 'mizer', label: 'Мизер', value: 10 }
+        ];
+
+        // --- Components defined OUTSIDE App to fix focus loss bug ---
+
+        const SetupView = ({ players, playerCount, targetPool, updatePlayerName, updateSettings, onStart }) => (
+            <div className="p-4 max-w-lg mx-auto bg-white rounded-lg shadow-lg mt-10">
+                <h2 className="text-2xl font-bold mb-4 text-green-800">Настройки игры</h2>
+                <div className="mb-4">
+                    <label className="block text-gray-700 font-bold mb-2">Количество игроков</label>
+                    <div className="flex gap-4">
+                        <button onClick={() => updateSettings('playerCount', 3)} className={`px-4 py-2 rounded ${playerCount === 3 ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>3 Игрока</button>
+                        <button onClick={() => updateSettings('playerCount', 4)} className={`px-4 py-2 rounded ${playerCount === 4 ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>4 Игрока</button>
+                    </div>
+                </div>
+                <div className="mb-6">
+                    <label className="block text-gray-700 font-bold mb-2">Размер Пули</label>
+                    <input 
+                        type="number" 
+                        value={targetPool} 
+                        onChange={(e) => updateSettings('targetPool', parseInt(e.target.value) || 0)} 
+                        className="w-full p-2 border rounded"
+                    />
+                </div>
+                <div className="space-y-3 mb-6">
+                    <label className="block text-gray-700 font-bold">Имена игроков</label>
+                    {players.slice(0, playerCount).map((p, idx) => (
+                        <div key={p.id} className="flex items-center gap-2">
+                            <span className="w-6 font-bold text-gray-400">{idx+1}.</span>
+                            <input 
+                                value={p.name} 
+                                onChange={(e) => updatePlayerName(idx, e.target.value)} 
+                                className="flex-1 p-2 border rounded" 
+                                placeholder={`Игрок ${idx+1}`}
+                            />
+                        </div>
+                    ))}
+                </div>
+                <button onClick={onStart} className="w-full bg-green-700 text-white py-3 rounded-lg font-bold text-lg hover:bg-green-800">Начать Игру</button>
+            </div>
+        );
+
+        const CalculationModal = ({ detailedScores, onClose }) => (
+            <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-2 backdrop-blur-sm" onClick={onClose}>
+                <div className="bg-white rounded-xl w-full max-w-lg overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+                    <div className="bg-gray-100 p-4 border-b flex justify-between items-center">
+                        <h3 className="font-bold text-lg">Протокол расчета</h3>
+                        <button onClick={onClose} className="text-gray-500 font-bold text-xl">&times;</button>
+                    </div>
+                    <div className="p-4 overflow-x-auto">
+                        <table className="w-full text-sm text-center">
+                            <thead>
+                                <tr className="bg-gray-50 text-xs text-gray-500 uppercase">
+                                    <th className="p-2 text-left">Игрок</th>
+                                    <th className="p-2">Амн.Гора</th>
+                                    <th className="p-2">Счет Гора</th>
+                                    <th className="p-2">Висты</th>
+                                    <th className="p-2 font-bold">ИТОГ</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {detailedScores.map(ds => (
+                                    <tr key={ds.id} className="border-b last:border-0">
+                                        <td className="p-2 text-left font-medium">{ds.name}</td>
+                                        <td className="p-2 text-gray-500">{Math.round(ds.finalHill)}</td>
+                                        <td className="p-2">{ds.hillScore > 0 ? `+${ds.hillScore}` : ds.hillScore}</td>
+                                        <td className="p-2">{ds.whistScore > 0 ? `+${ds.whistScore}` : ds.whistScore}</td>
+                                        <td className={`p-2 font-bold text-base ${ds.totalScore >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                            {ds.totalScore > 0 ? `+${ds.totalScore}` : ds.totalScore}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                        <div className="mt-4 text-xs text-gray-400">
+                            * Амнистированная Гора = (Реальная Гора) + (Недобор пули * 10)
+                        </div>
+                    </div>
+                    <div className="p-4 border-t bg-gray-50">
+                        <button onClick={onClose} className="w-full py-2 bg-gray-200 rounded font-bold">Закрыть</button>
+                    </div>
+                </div>
+            </div>
+        );
+
+        const ScoreboardView = ({ players, playerCount, targetPool, history, detailedScores, onReset, onShowCalc, onAddHand, onManualEntry }) => {
+            const activePlayers = players.slice(0, playerCount);
+            return (
+                <div className="max-w-5xl mx-auto pb-64">
+                    {/* Header */}
+                    <div className="bg-green-800 text-white p-4 sticky top-0 z-10 flex justify-between items-center shadow-lg">
+                        <div>
+                            <h1 className="text-xl font-bold">Сочинка ({playerCount} игр.)</h1>
+                            <div className="text-xs opacity-75">Пуля до {targetPool}</div>
+                        </div>
+                        <button onClick={onReset} className="text-xs bg-red-800 px-2 py-1 rounded">Сброс</button>
+                    </div>
+
+                    {/* Main Grid */}
+                    <div className={`grid gap-2 p-2 ${playerCount === 4 ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3'}`}>
+                        {activePlayers.map(p => {
+                            const ds = detailedScores.find(s => s.id === p.id);
+                            const currentScore = ds?.totalScore || 0;
+                            return (
+                                <div key={p.id} className="bg-white rounded shadow flex flex-col overflow-hidden text-sm">
+                                    <div className="bg-gray-100 p-2 text-center font-bold border-b border-gray-300 truncate">
+                                        {p.name}
+                                    </div>
+                                    <div className="p-2 space-y-1 flex-grow">
+                                        <div className="flex justify-between items-center bg-green-50 p-1 rounded">
+                                            <span>П:</span><span className="font-bold text-green-700">{p.pool}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center bg-red-50 p-1 rounded">
+                                            <span>Г:</span><span className="font-bold text-red-700">{p.hill}</span>
+                                        </div>
+                                        <div className="mt-2 border-t pt-1">
+                                            <div className="text-xs text-gray-400 mb-1">Висты:</div>
+                                            {activePlayers.map(target => {
+                                                if(target.id === p.id) return null;
+                                                return (
+                                                    <div key={target.id} className="flex justify-between text-xs mb-0.5">
+                                                        <span className="truncate w-16">{target.name}:</span>
+                                                        <span>{p.whists[target.id]}</span>
+                                                    </div>
+                                                )
+                                            })}
+                                        </div>
+                                    </div>
+                                    <div className={`p-2 text-center text-white font-bold ${currentScore >= 0 ? 'bg-green-600' : 'bg-red-500'}`}>
+                                        {currentScore > 0 ? '+' : ''}{currentScore}
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+
+                    {/* Summary Bar */}
+                    <div className="mx-2 mt-4 mb-2 p-3 bg-blue-50 rounded-lg border border-blue-100 shadow-sm">
+                        <h3 className="text-xs font-bold text-blue-800 uppercase mb-2 tracking-wider">Текущий итог (Висты)</h3>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1">
+                            {detailedScores.map(ds => (
+                                <div key={ds.id} className="text-sm font-bold whitespace-nowrap">
+                                    {ds.name}: <span className={ds.totalScore >= 0 ? 'text-green-600' : 'text-red-600'}>{ds.totalScore > 0 ? '+' : ''}{ds.totalScore}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* History */}
+                    <div className="p-2">
+                        <h3 className="text-lg font-bold text-gray-700 mb-2">История</h3>
+                        <div className="space-y-2">
+                            {history.map((h, idx) => (
+                                <div key={h.id} className="bg-white p-2 rounded shadow-sm border-l-4 border-gray-400 text-xs flex justify-between items-center">
+                                    <div className="flex-1 mr-2">
+                                        <span className="text-gray-400 mr-2">{history.length - idx}.</span>
+                                        {h.text}
+                                    </div>
+                                    <div className="text-gray-400 whitespace-nowrap">{h.timestamp}</div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Bottom Buttons Container */}
+                    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] p-3 pb-safe flex flex-col gap-3 z-40">
+                         <button 
+                            onClick={onShowCalc}
+                            className="w-full py-3 bg-gray-200 text-gray-700 font-bold rounded-lg shadow-sm active:scale-[0.99] transition-transform text-lg"
+                        >
+                            🧮 Показать расчет
+                        </button>
+                        <div className="flex gap-2">
+                            <button 
+                                onClick={onManualEntry}
+                                className="flex-1 py-4 bg-orange-600 text-white font-bold rounded-lg shadow-md active:scale-[0.99] transition-transform text-lg leading-tight"
+                            >
+                                ✍️ Ручной<br/><span className="text-sm font-normal">ввод</span>
+                            </button>
+                            <button 
+                                onClick={onAddHand}
+                                className="flex-[2] py-4 bg-blue-600 text-white font-bold rounded-lg shadow-md active:scale-[0.99] transition-transform text-xl"
+                            >
+                                + Сдача<br/><span className="text-sm font-normal">(Авто)</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const AddHandView = ({ players, playerCount, currentDealerId, onBack, onSave }) => {
+            const activePlayers = players.slice(0, playerCount);
+            const isFourPlayers = playerCount === 4;
+            
+            const [handType, setHandType] = useState('6');
+            const [declarerId, setDeclarerId] = useState(null); // Will default in effect or render
+            const [handDealerId, setHandDealerId] = useState(currentDealerId || 4);
+            const [tricks, setTricks] = useState({});
+
+            const isRaspas = handType === 'raspas';
+            const totalTricks = Object.values(tricks).reduce((a, b) => a + Number(b), 0);
+
+            // Default declarer to first non-dealer
+            const defaultDeclarer = useMemo(() => {
+                const p = activePlayers.find(p => !isFourPlayers || p.id !== handDealerId);
+                return p ? p.id : activePlayers[0].id;
+            }, [handDealerId, isFourPlayers, activePlayers]);
+
+            const effectiveDeclarer = declarerId || defaultDeclarer;
+
+            const handleSave = () => {
+                onSave({ handType, declarerId: effectiveDeclarer, tricks, handDealerId });
+            };
+
+            return (
+                <div className="max-w-2xl mx-auto p-4 bg-white min-h-screen pb-20">
+                    <div className="flex items-center mb-6">
+                        <button onClick={onBack} className="text-blue-600 mr-4 font-bold text-lg">← Назад</button>
+                        <h2 className="text-xl font-bold">Новая запись (Авто)</h2>
+                    </div>
+                    <div className="mb-6">
+                        <label className="block text-sm font-bold text-gray-700 mb-2">Игра</label>
+                        <div className="flex flex-wrap gap-2">
+                            {GAME_TYPES.map(g => (
+                                <button key={g.id} onClick={() => { setHandType(g.id); setTricks({}); }} className={`px-3 py-2 rounded border text-sm font-bold ${handType === g.id ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}>{g.label}</button>
+                            ))}
+                        </div>
+                    </div>
+                    {isFourPlayers && (
+                        <div className="mb-6 bg-yellow-50 p-3 rounded border border-yellow-200">
+                            <label className="block text-sm font-bold text-gray-700 mb-2">Кто на прикупе (сдает)?</label>
+                            <select value={handDealerId} onChange={(e) => setHandDealerId(Number(e.target.value))} className="w-full p-2 border rounded bg-white">
+                                {activePlayers.map(p => (<option key={p.id} value={p.id}>{p.name}</option>))}
+                            </select>
+                        </div>
+                    )}
+                    {!isRaspas && (
+                        <div className="mb-6">
+                            <label className="block text-sm font-bold text-gray-700 mb-2">Играющий</label>
+                            <select value={effectiveDeclarer} onChange={(e) => setDeclarerId(Number(e.target.value))} className="w-full p-3 border rounded bg-gray-50 text-lg font-bold">
+                                {activePlayers.filter(p => !isFourPlayers || p.id !== handDealerId).map(p => (<option key={p.id} value={p.id}>{p.name}</option>))}
+                            </select>
+                        </div>
+                    )}
+                    <div className="mb-8">
+                        <label className="block text-sm font-bold text-gray-700 mb-2">{isRaspas ? "Взятки (включая прикуп/амнистию)" : "Взятки по факту"}</label>
+                        <div className="space-y-3">
+                            {activePlayers.map(p => {
+                                if (!isRaspas) {
+                                    if (isFourPlayers && p.id === handDealerId) return null;
+                                    if (handType === 'mizer' && p.id !== effectiveDeclarer) return null;
+                                }
+                                return (
+                                    <div key={p.id} className="flex justify-between items-center border p-3 rounded shadow-sm">
+                                        <div className="flex flex-col">
+                                            <span className="font-bold text-gray-800">{p.name}</span>
+                                            {isRaspas && isFourPlayers && p.id === handDealerId && <span className="text-xs text-orange-600 font-bold">(На прикупе)</span>}
+                                            {p.id === effectiveDeclarer && !isRaspas && <span className="text-xs text-blue-600 font-bold">(Играет)</span>}
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <button onClick={() => setTricks(prev => ({...prev, [p.id]: Math.max(0, (prev[p.id]||0) - 1)}))} className="w-10 h-10 rounded-full bg-gray-200 text-2xl flex items-center justify-center text-gray-600 hover:bg-gray-300">-</button>
+                                            <span className="w-8 text-center font-bold text-2xl">{tricks[p.id] || 0}</span>
+                                            <button onClick={() => setTricks(prev => ({...prev, [p.id]: Math.min(10, (prev[p.id]||0) + 1)}))} className="w-10 h-10 rounded-full bg-gray-200 text-2xl flex items-center justify-center text-gray-600 hover:bg-gray-300">+</button>
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                        <div className="text-right mt-2 text-sm text-gray-500 font-bold">Сумма взяток: {totalTricks}</div>
+                    </div>
+                    <button onClick={handleSave} className="w-full bg-green-600 text-white py-4 rounded-lg font-bold text-xl shadow hover:bg-green-700 active:scale-95 transition-transform">Записать</button>
+                </div>
+            );
+        };
+
+        const ManualEntryView = ({ players, playerCount, onBack, onSave }) => {
+            const activePlayers = players.slice(0, playerCount);
+            // State structure: { playerId: { pool: 0, hill: 0, whists: { targetId: 0 } } }
+            const [deltas, setDeltas] = useState(() => {
+                const initial = {};
+                activePlayers.forEach(p => {
+                    initial[p.id] = { pool: '', hill: '', whists: {} };
+                    activePlayers.forEach(t => { if(t.id !== p.id) initial[p.id].whists[t.id] = ''; });
+                });
+                return initial;
+            });
+
+            const updateDelta = (pid, field, value, subField = null) => {
+                setDeltas(prev => {
+                    const pData = { ...prev[pid] };
+                    if (subField) {
+                        pData.whists = { ...pData.whists, [subField]: value };
+                    } else {
+                        pData[field] = value;
+                    }
+                    return { ...prev, [pid]: pData };
+                });
+            };
+
+            const handleSubmit = () => {
+                // Convert strings to ints
+                const cleanDeltas = {};
+                activePlayers.forEach(p => {
+                    cleanDeltas[p.id] = {
+                        p: parseInt(deltas[p.id].pool) || 0,
+                        h: parseInt(deltas[p.id].hill) || 0,
+                        w: {}
+                    };
+                    activePlayers.forEach(t => {
+                        if(p.id !== t.id) {
+                            cleanDeltas[p.id].w[t.id] = parseInt(deltas[p.id].whists[t.id]) || 0;
+                        }
+                    });
+                });
+                onSave(cleanDeltas);
+            };
+
+            return (
+                <div className="max-w-2xl mx-auto p-4 bg-white min-h-screen pb-20">
+                    <div className="flex items-center mb-6">
+                        <button onClick={onBack} className="text-blue-600 mr-4 font-bold text-lg">← Назад</button>
+                        <h2 className="text-xl font-bold">Ручной ввод</h2>
+                    </div>
+                    <div className="space-y-6">
+                        {activePlayers.map(p => (
+                            <div key={p.id} className="border rounded-lg shadow-sm overflow-hidden">
+                                <div className="bg-gray-100 p-3 font-bold text-lg border-b">{p.name}</div>
+                                <div className="p-4 space-y-4">
+                                    <div className="flex gap-4">
+                                        <div className="flex-1">
+                                            <label className="block text-xs font-bold text-green-700 mb-1">Пуля (+)</label>
+                                            <input type="number" value={deltas[p.id].pool} onChange={e => updateDelta(p.id, 'pool', e.target.value)} className="w-full p-2 border border-green-200 rounded bg-green-50" placeholder="0" />
+                                        </div>
+                                        <div className="flex-1">
+                                            <label className="block text-xs font-bold text-red-700 mb-1">Гора (+/-)</label>
+                                            <input type="number" value={deltas[p.id].hill} onChange={e => updateDelta(p.id, 'hill', e.target.value)} className="w-full p-2 border border-red-200 rounded bg-red-50" placeholder="0" />
+                                        </div>
+                                    </div>
+                                    <div className="bg-gray-50 p-2 rounded">
+                                        <div className="text-xs text-gray-500 font-bold mb-2">ВИСТЫ НА:</div>
+                                        <div className="space-y-2">
+                                            {activePlayers.filter(t => t.id !== p.id).map(t => (
+                                                <div key={t.id} className="flex items-center gap-2">
+                                                    <span className="w-20 text-sm truncate">{t.name}:</span>
+                                                    <input type="number" value={deltas[p.id].whists[t.id]} onChange={e => updateDelta(p.id, 'whists', e.target.value, t.id)} className="flex-1 p-2 border rounded text-sm" placeholder="0" />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    <button onClick={handleSubmit} className="w-full bg-orange-600 text-white py-4 mt-6 rounded-lg font-bold text-xl shadow hover:bg-orange-700 active:scale-95 transition-transform">Записать изменения</button>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const getInitialState = () => {
+                const saved = localStorage.getItem('pref_sochi_state_v2'); 
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    if (parsed.players.length < 4) {
+                        parsed.players.push({ id: 4, name: 'Игрок 4', pool: 0, hill: 0, whists: { 1: 0, 2: 0, 3: 0 } });
+                    }
+                    return parsed;
+                }
+                return {
+                    players: [
+                        { id: 1, name: 'Игрок 1', pool: 0, hill: 0, whists: { 2: 0, 3: 0, 4: 0 } },
+                        { id: 2, name: 'Игрок 2', pool: 0, hill: 0, whists: { 1: 0, 3: 0, 4: 0 } },
+                        { id: 3, name: 'Игрок 3', pool: 0, hill: 0, whists: { 1: 0, 2: 0, 4: 0 } },
+                        { id: 4, name: 'Игрок 4', pool: 0, hill: 0, whists: { 1: 0, 2: 0, 3: 0 } }
+                    ],
+                    targetPool: 20,
+                    playerCount: 3,
+                    currentDealerId: 4, 
+                    history: [], 
+                    gameStarted: false
+                };
+            };
+
+            const [state, setState] = useState(getInitialState);
+            const [view, setView] = useState('scoreboard'); 
+            const [showCalcModal, setShowCalcModal] = useState(false);
+
+            useEffect(() => {
+                localStorage.setItem('pref_sochi_state_v2', JSON.stringify(state));
+            }, [state]);
+
+            const updatePlayerName = (idx, name) => {
+                const newPlayers = [...state.players];
+                newPlayers[idx].name = name;
+                setState(prev => ({ ...prev, players: newPlayers }));
+            };
+
+            const updateSettings = (field, value) => {
+                setState(prev => ({ ...prev, [field]: value }));
+            };
+
+            const processHand = ({ handType, declarerId, tricks, handDealerId }) => {
+                const game = GAME_TYPES.find(g => g.id === handType);
+                const allPlayers = state.players.slice(0, state.playerCount); 
+                const isFourPlayers = state.playerCount === 4;
+                const isRaspas = handType === 'raspas';
+
+                let deltas = {}; 
+                allPlayers.forEach(p => {
+                    deltas[p.id] = { p: 0, h: 0, w: {} };
+                    allPlayers.forEach(target => {
+                        if(p.id !== target.id) deltas[p.id].w[target.id] = 0;
+                    });
+                });
+
+                let resultText = "";
+
+                if (isRaspas) {
+                    const RASPAS_COST = 2; 
+                    resultText = isFourPlayers ? "Распасы (4 игр): " : "Распасы: ";
+                    let details = [];
+                    allPlayers.forEach(p => {
+                        const t = tricks[p.id] || 0;
+                        if (t > 0) {
+                            const penalty = t * RASPAS_COST;
+                            deltas[p.id].h += penalty;
+                            details.push(`${p.name} +${penalty}Г (${t})`);
+                        }
+                    });
+                    resultText += details.join(', ');
+                } else if (handType === 'mizer') {
+                    const declarer = allPlayers.find(p => p.id === Number(declarerId));
+                    const taken = tricks[declarer.id] || 0;
+                    if (taken === 0) {
+                        deltas[declarer.id].p += 10;
+                        resultText = `${declarer.name}: Мизер чисто (+10П)`;
+                    } else {
+                        const penalty = taken * 10;
+                        deltas[declarer.id].h += penalty;
+                        resultText = `${declarer.name}: Мизер ловленный (${taken} вз, +${penalty}Г)`;
+                    }
+                } else {
+                    const declarer = allPlayers.find(p => p.id === Number(declarerId));
+                    const contract = parseInt(handType);
+                    const taken = tricks[declarer.id] || 0;
+                    const gameValue = game.value;
+                    const whisters = allPlayers.filter(p => p.id !== declarer.id && (!isFourPlayers || p.id !== handDealerId));
+
+                    if (taken >= contract) {
+                        deltas[declarer.id].p += gameValue;
+                        resultText = `${declarer.name}: ${contract} сыграл (+${gameValue}П). `;
+                        whisters.forEach(p => {
+                            const whisterTricks = tricks[p.id] || 0;
+                            if (whisterTricks > 0) deltas[p.id].w[declarer.id] += whisterTricks * gameValue;
+                        });
+                    } else {
+                        const missing = contract - taken;
+                        const penalty = missing * gameValue; 
+                        deltas[declarer.id].h += penalty;
+                        resultText = `${declarer.name}: ${contract} без ${missing} (+${penalty}Г). `;
+                        whisters.forEach(p => {
+                            const whisterTricks = tricks[p.id] || 0;
+                            if (whisterTricks > 0) deltas[p.id].w[declarer.id] += whisterTricks * gameValue;
+                        });
+                    }
+                }
+                
+                applyDeltas(deltas, resultText, handDealerId, isRaspas);
+            };
+
+            const processManualEntry = (manualDeltas) => {
+                applyDeltas(manualDeltas, "Ручная корректировка", state.currentDealerId, false);
+            };
+
+            const applyDeltas = (deltas, resultText, handDealerId, isRaspas) => {
+                const allPlayers = state.players.slice(0, state.playerCount);
+                const isFourPlayers = state.playerCount === 4;
+
+                const newPlayers = state.players.map(p => {
+                    const d = deltas[p.id];
+                    if (!d) return p; 
+                    const newWhists = { ...p.whists };
+                    Object.keys(d.w).forEach(targetId => {
+                        newWhists[targetId] = (newWhists[targetId] || 0) + d.w[targetId];
+                    });
+                    return { ...p, pool: p.pool + d.p, hill: p.hill + d.h, whists: newWhists };
+                });
+
+                let nextDealerId = state.currentDealerId;
+                if (isFourPlayers && !isRaspas && resultText !== "Ручная корректировка") { 
+                     const currentIdx = allPlayers.findIndex(p => p.id === handDealerId);
+                     const nextIdx = (currentIdx + 1) % 4;
+                     nextDealerId = allPlayers[nextIdx].id;
+                }
+
+                setState(prev => ({
+                    ...prev,
+                    players: newPlayers,
+                    currentDealerId: nextDealerId,
+                    history: [{ 
+                        id: Date.now(), 
+                        text: resultText,
+                        deltas: deltas,
+                        timestamp: new Date().toLocaleTimeString()
+                    }, ...prev.history]
+                }));
+
+                setView('scoreboard');
+            };
+
+            const detailedScores = useMemo(() => {
+                const activePlayers = state.players.slice(0, state.playerCount);
+                if (activePlayers.length === 0) return [];
+
+                const maxPool = Math.max(...activePlayers.map(p => p.pool));
+                const poolCompensations = activePlayers.map(p => (maxPool - p.pool) * 10);
+                
+                const playersWithAdjHill = activePlayers.map((p, i) => ({
+                    ...p,
+                    finalHill: p.hill + poolCompensations[i]
+                }));
+
+                const totalHill = playersWithAdjHill.reduce((sum, p) => sum + p.finalHill, 0);
+                const avgHill = totalHill / state.playerCount;
+                const hillScores = playersWithAdjHill.map(p => (avgHill - p.finalHill) * 10);
+
+                let whistScores = activePlayers.map(() => 0);
+                for (let i = 0; i < activePlayers.length; i++) {
+                    for (let j = i + 1; j < activePlayers.length; j++) {
+                        const p1 = activePlayers[i];
+                        const p2 = activePlayers[j];
+                        const w1on2 = p1.whists[p2.id] || 0;
+                        const w2on1 = p2.whists[p1.id] || 0;
+                        const diff = w1on2 - w2on1;
+                        whistScores[i] += diff;
+                        whistScores[j] -= diff;
+                    }
+                }
+
+                return activePlayers.map((p, i) => ({
+                    id: p.id,
+                    name: p.name,
+                    poolComp: poolCompensations[i],
+                    rawHill: p.hill,
+                    finalHill: playersWithAdjHill[i].finalHill,
+                    hillScore: Math.round(hillScores[i]),
+                    whistScore: whistScores[i],
+                    totalScore: Math.round(hillScores[i] + whistScores[i])
+                }));
+            }, [state.players, state.playerCount]);
+
+            if (!state.gameStarted) return <SetupView players={state.players} playerCount={state.playerCount} targetPool={state.targetPool} updatePlayerName={updatePlayerName} updateSettings={updateSettings} onStart={() => { updateSettings('gameStarted', true); setView('scoreboard'); }} />;
+
+            if (view === 'addHand') return <AddHandView players={state.players} playerCount={state.playerCount} currentDealerId={state.currentDealerId} onBack={() => setView('scoreboard')} onSave={processHand} />;
+            
+            if (view === 'manualEntry') return <ManualEntryView players={state.players} playerCount={state.playerCount} onBack={() => setView('scoreboard')} onSave={processManualEntry} />;
+
+            return (
+                <>
+                    <ScoreboardView 
+                        players={state.players} 
+                        playerCount={state.playerCount} 
+                        targetPool={state.targetPool} 
+                        history={state.history} 
+                        detailedScores={detailedScores}
+                        onReset={() => { if(confirm('Сбросить игру?')) { localStorage.removeItem('pref_sochi_state_v2'); window.location.reload(); }}}
+                        onShowCalc={() => setShowCalcModal(true)}
+                        onAddHand={() => setView('addHand')}
+                        onManualEntry={() => setView('manualEntry')}
+                    />
+                    {showCalcModal && <CalculationModal detailedScores={detailedScores} onClose={() => setShowCalcModal(false)} />}
+                </>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
